@@ -1,7 +1,8 @@
 # from mlpkan.MLPKAN import MLPKAN
-# from mlpkan.MLPKANtorch import MLPKAN
+from mlpkan.MLPKANtorch import MLPKAN
 # from fastkan import FastKAN
-from efficient_kan import KAN as EfficientKAN
+# from efficient_kan import KAN as EfficientKAN
+# from mlp.MLP import standardMLP
 import torch
 import numpy as np
 import random
@@ -59,9 +60,10 @@ def main():
             dataset = {'train_input': X_train, 'train_label': y_train, 'test_input': X_test, 'test_label': y_test}
             # # Initialize KAN and fit the model
 
-            # kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[5,3])
+            kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[5])
             # kan = FastKAN([X_train.size()[1], 3, 1], num_grids=10)
-            kan = EfficientKAN([X_train.size()[1], 3, 1])
+            # kan = EfficientKAN([X_train.size()[1], 3, 1])
+            # kan = standardMLP([X_train.size()[1], 8, 8, 1])
 
             t0 = time.perf_counter()
             kan.fit(dataset=dataset, steps=500, lr=0.001, early_stop=True);
@@ -75,8 +77,8 @@ def main():
             print(f"Error processing {file_path.name}: {e}")
             results.append([function_name, None, None])
 
-    results_df = pd.DataFrame(results, columns=['Function', 'R2 Score', 'KAN time'])
-    results_df.to_csv('kan_feynman_results_efficientMLPKAN.csv', index=False)
+    results_df = pd.DataFrame(results, columns=['Function', 'R2 Score', 'time'])
+    results_df.to_csv('kan_feynman_results_MLPKANtorch.csv', index=False)
 
 
 if __name__ == "__main__":
