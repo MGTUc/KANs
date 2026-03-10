@@ -92,16 +92,16 @@ class MLPKANLayer(nn.Module):
 class MLPKAN(nn.Module):
     """Multi-layer MLPKAN network."""
     
-    def __init__(self, input_size, hidden_sizes=[3], output_size=1, subnetwork_shape=[2, 2]):
+    def __init__(self, layerSizes, subnetwork_shape=[2, 2]):
         super().__init__()
-        layer_dims = [input_size] + hidden_sizes + [output_size]
+        self.layer_dims = layerSizes
         
         layers = []
-        for i in range(len(layer_dims) - 1):
+        for i in range(len(layerSizes) - 1):
             layers.append(
                 MLPKANLayer(
-                    input_size=layer_dims[i],
-                    output_size=layer_dims[i + 1],
+                    input_size=layerSizes[i],
+                    output_size=layerSizes[i + 1],
                     subnetwork_shape=subnetwork_shape
                 )
             )
@@ -110,15 +110,7 @@ class MLPKAN(nn.Module):
     def forward(self, x):
         return self.layers(x)
 
-    def fit(
-        self,
-        dataset,
-        steps,
-        batch_size=128,
-        lr=1.0,
-        early_stop=False,
-        optimizer_name='Adam'
-    ):
+    def fit(self, dataset, steps, batch_size=128,lr=1.0, early_stop=False, optimizer_name='AdamW'):
         """
         Train the MLPKAN model.
         
@@ -142,8 +134,8 @@ class MLPKAN(nn.Module):
 
         loss_fn = nn.MSELoss()
         
-        if optimizer_name == 'Adam':
-            optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        if optimizer_name == 'AdamW':
+            optimizer = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=1e-4)
         elif optimizer_name == 'LBFGS':
             optimizer = torch.optim.LBFGS(
                 self.parameters(),
@@ -159,19 +151,19 @@ class MLPKAN(nn.Module):
         for epoch in range(steps):
             self.train()
             
-            if optimizer_name == 'Adam':
+            if optimizer_name == 'AdamW':
                 # Mini-batch SGD with shuffling
                 indices = torch.randperm(n_samples, device=device)
                 for i in range(0, n_samples, batch_size):
                     batch_idx = indices[i:i + batch_size]
                     X_batch = train_input[batch_idx]
                     y_batch = train_label[batch_idx]
-                    
+
+                    optimizer.zero_grad()
                     pred = self.forward(X_batch)
                     loss = loss_fn(pred, y_batch)
-                    
-                    optimizer.zero_grad()
                     loss.backward()
+
                     torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                     optimizer.step()
                     
@@ -195,11 +187,7 @@ class MLPKAN(nn.Module):
                 history['rmse_history'].append(rmse)
                 history['R2_history'].append(r2)
                 
-                print(
-                    f"Epoch {epoch + 1}/{steps}, RMSE: {rmse:.4f}, R²: {r2:.4f}",
-                    end='\r',
-                    flush=True
-                )
+                print(f"Epoch {epoch + 1}/{steps}, RMSE: {rmse:.4f}, R²: {r2:.4f}", end='\r', flush=True)
                 
                 if early_stop and r2 > 0.99:
                     print(f"\nEarly stopping at epoch {epoch + 1} with R²: {r2:.4f}")

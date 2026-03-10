@@ -143,6 +143,77 @@ class FastKAN(nn.Module):
         for layer in self.layers:
             x = layer(x)
         return x
+    
+    def fit(self, dataset, steps, batch_size=128, lr=1e-3, early_stop=False, optimizer_name='AdamW'):
+
+        def R2(preds, targets):
+            """
+            Coefficient of Determination (R²).
+            Note: R² can be negative if predictions are worse than the mean baseline.
+            R² = 1 - (SS_res / SS_tot)
+            """
+            pred_mean = torch.mean(preds, dim=0, keepdim=True)
+            target_mean = torch.mean(targets, dim=0, keepdim=True)
+            SS_res = torch.sum((targets - preds)**2, dim=0)
+            SS_tot = torch.sum((targets - target_mean)**2, dim=0)
+            r2_score = 1 - (SS_res / (SS_tot + 1e-8))
+            return torch.nan_to_num(r2_score).item()
+        
+        device = next(self.parameters()).device
+
+        train_data = dataset['train_input'].to(device)
+        train_labels = dataset['train_label'].to(device)
+        test_data = dataset['test_input'].to(device)
+        test_labels = dataset['test_label'].to(device)
+
+        loss_fn = torch.nn.MSELoss()
+        if optimizer_name == 'AdamW':
+            optimizer = torch.optim.AdamW(self.parameters(), lr=lr)
+            # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.8)
+        elif optimizer_name == 'LBFGS':
+            optimizer = torch.optim.LBFGS(self.parameters(), lr=lr, line_search_fn="strong_wolfe")
+        
+        history = {'rmse_history': [], 'R2_history': []}
+        n_samples = train_data.shape[0]
+        
+        for t in range(steps):
+            self.train()
+            if optimizer_name == 'AdamW':
+                # Manual batching with shuffling
+                indices = torch.randperm(n_samples, device=device)
+                for i in range(0, n_samples, batch_size):
+                    batch_indices = indices[i:i+batch_size]
+                    X, y = train_data[batch_indices], train_labels[batch_indices]
+                    optimizer.zero_grad()
+                    pred = self.forward(X)
+                    loss = loss_fn(pred, y)
+                    loss.backward()
+                    optimizer.step()
+                    # scheduler.step()
+            elif optimizer_name == 'LBFGS':
+                def closure():
+                    optimizer.zero_grad()
+                    pred = self.forward(train_data)
+                    loss = loss_fn(pred, train_labels)
+                    loss.backward()
+                    return loss
+                optimizer.step(closure)
+
+            self.eval()
+            with torch.no_grad():
+                test_pred = self(test_data)
+
+                rmse_value = torch.sqrt(loss_fn(test_pred, test_labels)).item()
+                history['rmse_history'].append(rmse_value)
+
+                R2_value = R2(test_pred, test_labels)
+                history['R2_history'].append(R2_value)
+                print(f"Epoch {t+1}/{steps}, RMSE: {rmse_value:.4f}, R2: {R2_value:.4f} ", end='\r',flush=True)
+                if early_stop and R2_value > 0.99:
+                    print(f"\nEarly stopping at epoch {t+1} with R2: {R2_value:.4f}")
+                    break
+
+        return history
 
 
 class AttentionWithFastKANTransform(nn.Module):

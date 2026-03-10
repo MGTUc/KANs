@@ -1,5 +1,7 @@
-# from MLPKAN import MLPKAN
-from MLPKANtorch import MLPKAN
+# from mlpkan.MLPKAN import MLPKAN
+# from mlpkan.MLPKANtorch import MLPKAN
+# from fastkan import FastKAN
+from efficient_kan import KAN as EfficientKAN
 import torch
 import numpy as np
 import random
@@ -57,23 +59,24 @@ def main():
             dataset = {'train_input': X_train, 'train_label': y_train, 'test_input': X_test, 'test_label': y_test}
             # # Initialize KAN and fit the model
 
-            MLPKANmodel = MLPKAN(input_size=X_train.size()[1], hidden_sizes=[3], output_size=1, subnetwork_shape=[4,4])
-            
+            # kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[5,3])
+            # kan = FastKAN([X_train.size()[1], 3, 1], num_grids=10)
+            kan = EfficientKAN([X_train.size()[1], 3, 1])
 
             t0 = time.perf_counter()
-            MLPKANmodel.fit(dataset=dataset, steps=200, lr=0.001, early_stop=True);
-            t_MLPKAN = time.perf_counter() - t0
-            y_pred_kan = MLPKANmodel(dataset['test_input'])
+            kan.fit(dataset=dataset, steps=500, lr=0.001, early_stop=True);
+            t_KAN = time.perf_counter() - t0
+            y_pred_kan = kan(dataset['test_input'])
             R2_score_kan = R2(y_pred_kan, dataset['test_label']).item()
 
-            results.append([function_name, R2_score_kan, t_MLPKAN])
+            results.append([function_name, R2_score_kan, t_KAN])
 
         except Exception as e:
             print(f"Error processing {file_path.name}: {e}")
             results.append([function_name, None, None])
 
-    results_df = pd.DataFrame(results, columns=['Function', 'R2 Score', 'MLPKAN time'])
-    results_df.to_csv('kan_feynman_results_MLPKANtorch.csv', index=False)
+    results_df = pd.DataFrame(results, columns=['Function', 'R2 Score', 'KAN time'])
+    results_df.to_csv('kan_feynman_results_efficientMLPKAN.csv', index=False)
 
 
 if __name__ == "__main__":

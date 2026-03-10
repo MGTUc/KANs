@@ -83,11 +83,10 @@ class MLPKANlayer(nn.Module):
 
 
 class MLPKAN(nn.Module):
-    def __init__(self, input_size, hidden_sizes=[3], output_size=1, subnetwork_shape = [2,2]):
+    def __init__(self, layerSizes, subnetwork_shape = [2,2]):
         super(MLPKAN, self).__init__()
         self.subnetwork_shape = subnetwork_shape
 
-        layerSizes = [input_size] + hidden_sizes + [output_size]
         self.layerSizes = layerSizes
 
         layers = []
@@ -100,7 +99,7 @@ class MLPKAN(nn.Module):
     def forward(self, x):
         return self.layers(x)
     
-    def fit(self, dataset, steps, batch_size=128, lr=1, early_stop=False, optimizer_name='Adam'):
+    def fit(self, dataset, steps, batch_size=128, lr=1, early_stop=False, optimizer_name='AdamW'):
         device = next(self.parameters()).device
 
         train_data = dataset['train_input'].to(device)
@@ -109,8 +108,8 @@ class MLPKAN(nn.Module):
         test_labels = dataset['test_label'].to(device)
 
         loss_fn = nn.MSELoss()
-        if optimizer_name == 'Adam':
-            optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        if optimizer_name == 'AdamW':
+            optimizer = torch.optim.AdamW(self.parameters(), lr=lr)
         elif optimizer_name == 'LBFGS':
             optimizer = torch.optim.LBFGS(self.parameters(), lr=lr, line_search_fn="strong_wolfe")
         
@@ -119,15 +118,15 @@ class MLPKAN(nn.Module):
         
         for t in range(steps):
             self.train()
-            if optimizer_name == 'Adam':
+            if optimizer_name == 'AdamW':
                 # Manual batching with shuffling
                 indices = torch.randperm(n_samples, device=device)
                 for i in range(0, n_samples, batch_size):
                     batch_indices = indices[i:i+batch_size]
                     X, y = train_data[batch_indices], train_labels[batch_indices]
+                    optimizer.zero_grad()
                     pred = self.forward(X)
                     loss = loss_fn(pred, y)
-                    optimizer.zero_grad()
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                     optimizer.step()
