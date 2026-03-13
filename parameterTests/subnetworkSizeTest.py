@@ -1,5 +1,5 @@
 # from mlpkan.MLPKAN import MLPKAN
-# from mlpkan.MLPKANtorch import MLPKAN
+from mlpkan.MLPKANtorch import MLPKAN
 from mlpkan.fastMLPKAN import FastMLPKAN
 # from fastkan import FastKAN
 # from efficient_kan import KAN as EfficientKAN
@@ -24,7 +24,7 @@ def R2(preds, targets):
     r2_score = 1 - (SS_res / (SS_tot + 1e-8))
     return torch.nan_to_num(r2_score)
 
-def main():
+def main(subnetwork_shape):
     # Set random seeds for reproducibility
     seed = 500
     device = "cpu"
@@ -61,14 +61,14 @@ def main():
             dataset = {'train_input': X_train, 'train_label': y_train, 'test_input': X_test, 'test_label': y_test}
             # # Initialize KAN and fit the model
 
-            # kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[5])
-            kan = FastMLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[5])
+            # kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=subnetwork_shape)
+            kan = FastMLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=subnetwork_shape)
             # kan = FastKAN([X_train.size()[1], 3, 1], num_grids=10)
             # kan = EfficientKAN([X_train.size()[1], 3, 1])
             # kan = standardMLP([X_train.size()[1], 8, 8, 1])
 
             t0 = time.perf_counter()
-            kan.fit(dataset=dataset, steps=500, lr=0.001, early_stop=True);
+            kan.fit(dataset=dataset, steps=250, lr=0.001, early_stop=True);
             t_KAN = time.perf_counter() - t0
             y_pred_kan = kan(dataset['test_input'])
             R2_score_kan = R2(y_pred_kan, dataset['test_label']).item()
@@ -79,9 +79,21 @@ def main():
             print(f"Error processing {file_path.name}: {e}")
             results.append([function_name, None, None])
 
-    results_df = pd.DataFrame(results, columns=['Function', 'R2 Score', 'time'])
-    results_df.to_csv('kan_feynman_results_FastMLPKAN.csv', index=False)
+    avg_R2 = np.mean([r[1] for r in results if r[1] is not None])
+    avg_time = np.mean([r[2] for r in results if r[2] is not None and r[1] is not None and r[1] > 0.99])
+    return avg_R2, avg_time, len([r for r in results if r[1] is not None and r[1] > 0.99])
 
 
 if __name__ == "__main__":
-    main()
+    R2s = []
+    times = []
+    R2s_higherthan99 = []
+    for i in range(2, 17):
+        print(f"Testing subnetwork size: {i}")
+        avg_R2, avg_time, count_higherthan99 = main(subnetwork_shape=[i])
+        R2s.append(avg_R2)
+        times.append(avg_time)
+        R2s_higherthan99.append(count_higherthan99)
+
+
+    pd.DataFrame({'subnetwork_size': range(2, 17), 'avg_R2': R2s,'#R2>0.99': R2s_higherthan99, 'avg_time R2>0.99': times}).to_csv('./parameterTests/subnetwork_size_results.csv', index=False)
