@@ -1,4 +1,4 @@
-from mlpkan.MLPKAN import MLPKAN
+from mlpkan import MLPKAN
 # from fastkan import FastKAN
 # from efficient_kan import KAN as EfficientKAN
 # from mlp.MLP import standardMLP
@@ -77,7 +77,7 @@ def main():
             results.append([function_name, None, None])
 
     results_df = pd.DataFrame(results, columns=['Function', 'R2 Score', 'time'])
-    results_df.to_csv('kan_feynman_results_FastMLPKAN.csv', index=False)
+    results_df.to_csv('./feynmantest/kan_feynman_results_FastMLPKAN.csv', index=False)
 
 
 if __name__ == "__main__":

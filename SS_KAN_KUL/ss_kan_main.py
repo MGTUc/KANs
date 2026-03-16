@@ -96,7 +96,7 @@ model_save_dir = f"./test___model_saves_simple_{state_dim}"  # Directory to save
 os.makedirs(model_save_dir, exist_ok=True)
 save_every = 499  # Save model state dict every N epochs (0 to disable intermediate saves)
 # Set this path to load a specific state_dict before training, or set to None
-load_model_path = 'C:\\Users\\Maarten\\codeProjects\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_24_state_[2]_output_[2]_batch_512_5.pth'
+load_model_path = 'C:\\Users\\Maarten\\codeProjects\\KANs\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_24_state_[2]_output_[2]_batch_512_5.pth'
 #load_model_path = 'test___model_saves_simple_2/model_Silverbox_epoch_99_state_[2]_output_[2]_batch_64_highL1.pth'
 #load_model_path = 'model_saves_simple_1/best_model_Luca-Airfoil-CFD_epoch_989_state_[3]_output_[3]_batch_512_0.pth'
 print(f"loading model:{load_model_path}")
@@ -120,7 +120,7 @@ if load_model_path:
 learning_rate = 1e-2
 weight_decay = 1e-5
 lr_scheduler_gamma = 0.999
-num_epochs = 0
+num_epochs = 1
 batch_size = 512
 reg_lambda_l1 = 1e-3
 reg_lambda_l2 = 1e-5
