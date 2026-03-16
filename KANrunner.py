@@ -1,6 +1,4 @@
-# from mlpkan.MLPKAN import MLPKAN
-# from mlpkan.MLPKANtorch import MLPKAN
-from mlpkan.fastMLPKAN import FastMLPKAN
+from mlpkan.MLPKAN import MLPKAN
 # from fastkan import FastKAN
 # from efficient_kan import KAN as EfficientKAN
 # from mlp.MLP import standardMLP
@@ -61,8 +59,7 @@ def main():
             dataset = {'train_input': X_train, 'train_label': y_train, 'test_input': X_test, 'test_label': y_test}
             # # Initialize KAN and fit the model
 
-            # kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[5])
-            kan = FastMLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[5])
+            kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[5])
             # kan = FastKAN([X_train.size()[1], 3, 1], num_grids=10)
             # kan = EfficientKAN([X_train.size()[1], 3, 1])
             # kan = standardMLP([X_train.size()[1], 8, 8, 1])
