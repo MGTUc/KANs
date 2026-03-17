@@ -8,6 +8,18 @@ Created on Mon Feb 17 13:38:24 2025
 import numpy as np
 import torch
 
+def R2(preds, targets):
+    """
+    Coefficient of Determination (R²).
+    Note: R² can be negative if predictions are worse than the mean baseline.
+    R² = 1 - (SS_res / SS_tot)
+    """
+    pred_mean = torch.mean(preds, dim=0, keepdim=True)
+    target_mean = torch.mean(targets, dim=0, keepdim=True)
+    SS_res = torch.sum((targets - preds)**2, dim=0)
+    SS_tot = torch.sum((targets - target_mean)**2, dim=0)
+    r2_score = 1 - (SS_res / (SS_tot + 1e-8))
+    return torch.nan_to_num(r2_score).item()
 
 # Normalize both position (x) and velocity (x_dot), along with the input (u)
 def normalize_data(
@@ -448,6 +460,7 @@ def run_test_simulation_and_loss(state_train, model, dataset, device, loss_fn, u
                 pred_test_norm_np, _ = predict_recursive(model, initial_state_test, u_test_norm)
                 pred_test_norm_tensor = torch.tensor(pred_test_norm_np, dtype=torch.float32, device=device)
                 test_loss = loss_fn(pred_test_norm_tensor, y_test_norm)
+                test_R2 = R2(pred_test_norm_tensor, y_test_norm)
 
                 #print(f"    Simulated {len(pred_test_norm_np)} test steps.")
             except Exception as e:
@@ -468,8 +481,9 @@ def run_test_simulation_and_loss(state_train, model, dataset, device, loss_fn, u
             pred_test_norm = torch.cat(output_pred_list_test, dim=0)
 
             test_loss = loss_fn(pred_test_norm, y_test_norm)
+            test_R2 = R2(pred_test_norm, y_test_norm)
             
-    return test_loss
+    return test_loss, test_R2
 
 
 def run_test_simulation_and_loss_pyKAN(state_train, model, dataset, device, loss_fn):

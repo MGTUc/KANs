@@ -11,9 +11,10 @@ import torch.optim as optim
 from tqdm import tqdm
 import torch.nn as nn
 import random
-import _utils
-from data_class_SI import SystemIdentificationDataset
-from model_state_space import FullStateNonlinearityKAN, StateSpaceKANModel
+import SS_KAN_KUL._utils as _utils
+from SS_KAN_KUL.data_class_SI import SystemIdentificationDataset
+from SS_KAN_KUL.model_state_space import FullStateNonlinearityKAN, StateSpaceKANModel
+from mlpkan import FullStateNonlinearityMLPKAN
 import time
 import os
 import pandas as pd
@@ -30,12 +31,16 @@ print(f"\nFixed seed value at {seed_value}")
 random.seed(seed_value)  # Python's built-in random module
 np.random.seed(seed_value)  # NumPy
 torch.manual_seed(seed_value)  # PyTorch CPU
+
+
 # %%% Data
 test_case_name = "Silverbox"
 test_flag = "arrow_extra"
 norm_flag = "minmax"
 states_available_flag = False
 init_matrices_flag = 'Silverbox'
+
+
 # %%% Load Data
 dataset = SystemIdentificationDataset(
     test_case=test_case_name,
@@ -45,6 +50,8 @@ dataset = SystemIdentificationDataset(
     states_available=states_available_flag,
     init_matrices_flag=init_matrices_flag,
 )
+
+
 # %%% KAN
 state_dim = dataset.A_init.shape[0]
 input_dim = dataset.u_dim
@@ -53,31 +60,51 @@ output_dim = dataset.y_dim
 state_kan_input_size = state_dim + input_dim
 state_kan_hidden_layers = [2] # Hidden layers for state KAN
 state_kan_output_size = state_dim
-kan_grid_size = 5
+
 
 # Output KAN
 output_kan_input_size = state_dim + input_dim
 output_kan_hidden_layers = [2] # Hidden layers for output KAN
 output_kan_output_size = output_dim 
-output_kan_grid_size = 5
+
+
 # %%% model call
 # Instantiate state KAN (ensure params match)
-state_kan = FullStateNonlinearityKAN(
-    state_kan_input_size, state_kan_hidden_layers, state_kan_output_size, # Use general kan_hidden_layers config
-    grid_size=kan_grid_size,
-    grid_range=[-1, 1],
-    #base_activation=torch.nn.Identity
-    #grid_eps=0.1
-)
-output_kan = FullStateNonlinearityKAN(
-    output_kan_input_size,
-    output_kan_hidden_layers, # Use specific hidden layer config
-    output_kan_output_size,
-    grid_size=output_kan_grid_size, # Use specific grid size config
-    grid_range=[-1,1],
-    #base_activation=torch.nn.Identity
-   # grid_eps=0.1
-)
+nonlinearity_type = "MLPKAN" # Choose between "KAN" and "MLPKAN"
+match nonlinearity_type:
+    case "KAN":
+        kan_grid_size = 5
+        output_kan_grid_size = 5
+        state_kan = FullStateNonlinearityKAN(
+            state_kan_input_size, state_kan_hidden_layers, state_kan_output_size, # Use general kan_hidden_layers config
+            grid_size=kan_grid_size,
+            grid_range=[-1, 1],
+            #base_activation=torch.nn.Identity
+            #grid_eps=0.1
+        )
+        output_kan = FullStateNonlinearityKAN(
+            output_kan_input_size,
+            output_kan_hidden_layers, # Use specific hidden layer config
+            output_kan_output_size,
+            grid_size=output_kan_grid_size, # Use specific grid size config
+            grid_range=[-1,1],
+            #base_activation=torch.nn.Identity
+        # grid_eps=0.1
+        )
+    case "MLPKAN":
+        state_kan = FullStateNonlinearityMLPKAN(
+            state_kan_input_size,
+            state_kan_hidden_layers,
+            state_kan_output_size, # Use general kan_hidden_layers config
+            subnetwork_shape = [10]
+        )
+        output_kan = FullStateNonlinearityMLPKAN(
+            output_kan_input_size,
+            output_kan_hidden_layers, # Use specific hidden layer config
+            output_kan_output_size,
+            subnetwork_shape = [10]
+        )
+
 #state_kan = None
 #output_kan = None 
 model = StateSpaceKANModel(
@@ -91,16 +118,27 @@ model = StateSpaceKANModel(
     trainable_D=True,
 )
 model.to(device)
+
+
 # %%% Saving/Loading Configuration
-model_save_dir = f"./test___model_saves_simple_{state_dim}"  # Directory to save model state dicts
+model_save_dir = f"./SS_KAN_KUL/test___model_saves_simple_{state_dim}"  # Directory to save model state dicts
 os.makedirs(model_save_dir, exist_ok=True)
 save_every = 499  # Save model state dict every N epochs (0 to disable intermediate saves)
 # Set this path to load a specific state_dict before training, or set to None
-load_model_path = 'C:\\Users\\Maarten\\codeProjects\\KANs\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_24_state_[2]_output_[2]_batch_512_5.pth'
+
+load_model = False
+if load_model:
+    match nonlinearity_type:
+        case "KAN":
+            load_model_path = 'C:\\Users\\Maarten\\codeProjects\\KANs\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_24_state_[2]_output_[2]_batch_512_KAN.pth'
+        case "MLPKAN":
+            load_model_path = 'C:\\Users\\Maarten\\codeProjects\\KANs\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_24_state_[2]_output_[2]_batch_512_MLPKAN.pth'
+else:    
+    load_model_path = None
 #load_model_path = 'test___model_saves_simple_2/model_Silverbox_epoch_99_state_[2]_output_[2]_batch_64_highL1.pth'
 #load_model_path = 'model_saves_simple_1/best_model_Luca-Airfoil-CFD_epoch_989_state_[3]_output_[3]_batch_512_0.pth'
 print(f"loading model:{load_model_path}")
-save_best_model = True # <-- Add this flag to enable saving the best model
+save_best_model = False # <-- Add this flag to enable saving the best model
 # %%% Load model (if)
 if load_model_path:
     if os.path.isfile(load_model_path):
@@ -116,14 +154,25 @@ if load_model_path:
         print(
             f"=> Model file not found at '{load_model_path}'. Proceeding with initialized weights."
         )
+
+
 # %%% Optimizer
+# learning_rate = 1e-2
+# weight_decay = 1e-5
+# lr_scheduler_gamma = 0.999
+# num_epochs = 10
+# batch_size = 512
+# reg_lambda_l1 = 1e-3
+# reg_lambda_l2 = 1e-5
 learning_rate = 1e-2
 weight_decay = 1e-5
-lr_scheduler_gamma = 0.999
-num_epochs = 1
-batch_size = 512
+lr_scheduler_gamma = 0.999  
+num_epochs = 100
+batch_size = 128
 reg_lambda_l1 = 1e-3
 reg_lambda_l2 = 1e-5
+
+
 # %%% Optimization setup
 optimizer = optim.AdamW(
     model.parameters(), lr=learning_rate, weight_decay=weight_decay
@@ -144,10 +193,10 @@ print(
 print(f"The input dimension is {input_dim}.\nThe number of states is {state_dim}.\nThe output dimension is {output_dim}")
 # print(f"  Model Type: {model_type}")
 print(
-    f" State KAN model struct:{state_kan_input_size},{state_kan_hidden_layers},{state_kan_output_size} with grid size:{kan_grid_size}"
+    f" State KAN model struct:{state_kan_input_size},{state_kan_hidden_layers},{state_kan_output_size}"
 )
 print(
-    f" Output KAN model struct:{output_kan_input_size},{output_kan_hidden_layers},{output_kan_output_size} with grid size:{kan_grid_size}"
+    f" Output KAN model struct:{output_kan_input_size},{output_kan_hidden_layers},{output_kan_output_size}"
 )
 print(
     f"  Optimizer: AdamW, Learning Rate: {learning_rate}, Weight Decay: {weight_decay}"
@@ -158,6 +207,7 @@ print(
 )
 print("-------------------------------\n")
 # %%% Training Loop
+test_eval_every = 5
 if states_available_flag is True:
     train_dataset = torch.utils.data.TensorDataset(
         dataset.X_train_norm, dataset.u_train_norm, dataset.y_train_norm
@@ -176,12 +226,16 @@ train_loader = torch.utils.data.DataLoader(
 print("\n--- Training Start ---")
 epoch_loss_list_train = []
 epoch_loss_list_test = []
+epoch_R2_list_train = []
+epoch_R2_list_test = []
+epoch_time_list = []
 # --- Initialize tracking for best model ---
 best_test_loss = float('inf')
 best_epoch = -1
 current_best_model_path = None # <-- Add this to track the path
-t0 = time.time()
+
 # hidden_state = torch.zeros(1, model.state_dim, device=device) + torch.randn(1, model.state_dim, device=device) * 0.01
+t0 = time.perf_counter()
 for epoch in range(num_epochs):
     
     # add funtion to do a full data sweep every x epochs and update grid ?
@@ -198,6 +252,7 @@ for epoch in range(num_epochs):
         model.train()
 
     batch_loss_list_train = []
+    batch_R2_list_train = []
     progress_bar = tqdm(
         train_loader, desc=f"Epoch {epoch+1}/{num_epochs} (Train)"
     )
@@ -319,18 +374,21 @@ for epoch in range(num_epochs):
 
         progress_bar.set_postfix({"loss": f"{loss.item():.4f}"})
         batch_loss_list_train.append(loss.item())
+        batch_R2_train = _utils.R2(predicted_outputs_batch, batch_target_output)
+        batch_R2_list_train.append(batch_R2_train)
 
-        
     avg_epoch_loss = float(np.mean(batch_loss_list_train))
-    epoch_loss_list_train.append(avg_epoch_loss)   
+    epoch_loss_list_train.append(avg_epoch_loss)
+    epoch_R2_list_train.append(np.mean(batch_R2_list_train))
     print(f'Epoch average train loss = {avg_epoch_loss:.4f}')
     scheduler.step()
     
     # Test evaluation trick to avoid too many test evaluations which cost like shit
     test_loss = None
-    if (epoch + 1) % 5 == 0:
-        test_loss = _utils.run_test_simulation_and_loss(current_sim_state, model, dataset, device, loss_fn)
+    if (epoch + 1) % test_eval_every == 0:
+        test_loss, test_R2 = _utils.run_test_simulation_and_loss(current_sim_state, model, dataset, device, loss_fn)
         epoch_loss_list_test.append(test_loss)
+        epoch_R2_list_test.append(test_R2)
         print(f"Epoch {epoch+1} Test Loss: {test_loss:.4f}")
     
     # test_loss = _utils.run_test_simulation_and_loss(current_sim_state, model, dataset, device, loss_fn)
@@ -342,7 +400,7 @@ for epoch in range(num_epochs):
         if test_loss < best_test_loss:
             best_test_loss = test_loss
             best_epoch = epoch
-            new_best_path = os.path.join(model_save_dir, f'best_model_{test_case_name}_epoch_{epoch}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_{kan_grid_size}.pth')
+            new_best_path = os.path.join(model_save_dir, f'best_model_{test_case_name}_epoch_{epoch}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_{nonlinearity_type}.pth')
             try:
                 torch.save(model.state_dict(), new_best_path)
                 print(f"*** New best model saved with Test Loss: {best_test_loss:.4f} at Epoch {epoch+1} to {new_best_path} ***")
@@ -360,7 +418,7 @@ for epoch in range(num_epochs):
                       (epoch == num_epochs - 1) 
 
     if save_model_flag and special_flag is None:
-        model_name = f'model_{test_case_name}_epoch_{epoch}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}.pth'
+        model_name = f'model_{test_case_name}_epoch_{epoch}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_{nonlinearity_type}.pth'
         model_save_path = os.path.join(model_save_dir, model_name)
         try:
             torch.save(model.state_dict(), model_save_path)
@@ -368,14 +426,37 @@ for epoch in range(num_epochs):
         except Exception as e:
             print(f"\nError saving model state_dict: {e}")
     elif save_model_flag and special_flag is not None:
-        model_name = f'model_{test_case_name}_epoch_{epoch}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_specialflag_{special_flag}.pth'
+        model_name = f'model_{test_case_name}_epoch_{epoch}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_specialflag_{special_flag}_{nonlinearity_type}.pth'
         model_save_path = os.path.join(model_save_dir, model_name)
+    
+    epoch_time = time.perf_counter() - t0
+    epoch_time_list.append(epoch_time)
 
 
-t1 = time.time()
+t1 = time.perf_counter()
 t_total = t1 - t0
-print(f"\n Training finished in {t_total} seconds")
+print(f"\n Training finished in {t_total:.2f} seconds")
 print('restart from save but with update TRUE')
+trainingCSVPath = os.path.join(model_save_dir, f'training_history_{test_case_name}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_{nonlinearity_type}.csv')
+interleaved_test_loss = [None] * len(epoch_loss_list_train)
+interleaved_test_r2 = [None] * len(epoch_R2_list_train)
+
+for index, test_value in enumerate(epoch_loss_list_test):
+    interleaved_test_loss[((index + 1) * test_eval_every) - 1] = test_value
+
+for index, test_value in enumerate(epoch_R2_list_test):
+    interleaved_test_r2[((index + 1) * test_eval_every) - 1] = test_value
+
+training_history_df = pd.DataFrame({
+    'epoch': list(range(1, len(epoch_loss_list_train) + 1)),
+    'time': epoch_time_list,
+    'train_loss': epoch_loss_list_train,
+    'test_loss': interleaved_test_loss,
+    'train_R2': epoch_R2_list_train,
+    'test_R2': interleaved_test_r2
+})
+training_history_df.to_csv(trainingCSVPath, index=False)
+
 # %% Final metrics
 # --- Final Evaluation Section ---
 # Decide whether to load the best model for final evaluation or use the model from the last epoch
@@ -408,24 +489,23 @@ print(f"MAE (Test): {evaluation_metrics['mae_test']:.4f}")
 print(f"RMSE (Test): {evaluation_metrics['rmse_test']:.4f}")
 
 # aaaa
-new_best_path = "No model saved"
-rows = []
-rows.append({
-    "model_name": new_best_path,
-    "input_dim": input_dim,
-    "state_dim":state_dim,
-    "output_dim":output_dim,
-    "mae_train": float(evaluation_metrics["mae_train"]),
-    "rmse_train": float(evaluation_metrics["rmse_train"]),
-    "mae_test": float(evaluation_metrics["mae_test"]),
-    "rmse_test": float(evaluation_metrics["rmse_test"]),
-    "state_layers": state_kan_hidden_layers,
-    "output_layers": output_kan_hidden_layers,
-    "grid_size": kan_grid_size,
-    "batch_size":batch_size,
-    "epoch": best_epoch
-})
+# rows = []
+# rows.append({
+#     "model_name": new_best_path,
+#     "input_dim": input_dim,
+#     "state_dim":state_dim,
+#     "output_dim":output_dim,
+#     "mae_train": float(evaluation_metrics["mae_train"]),
+#     "rmse_train": float(evaluation_metrics["rmse_train"]),
+#     "mae_test": float(evaluation_metrics["mae_test"]),
+#     "rmse_test": float(evaluation_metrics["rmse_test"]),
+#     "state_layers": state_kan_hidden_layers,
+#     "output_layers": output_kan_hidden_layers,
+#     "grid_size": kan_grid_size,
+#     "batch_size":batch_size,
+#     "epoch": best_epoch
+# })
 
-new_df = pd.DataFrame(rows)
+# new_df = pd.DataFrame(rows)
 # _utils.save_results_to_excel(new_df)
 

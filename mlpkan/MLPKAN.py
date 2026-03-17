@@ -25,9 +25,9 @@ class MLPKANlayer(nn.Module):
         self.input_size = input_size
         self.output_size = output_size
         self.num_nets = input_size * output_size
+        self.pre_activations = None
+        self.post_activations = None
         
-        # Build the full architecture: 1 -> hidden -> 1
-        # Example: [1, 5, 5, 1]
         full_shape = [1] + subnetwork_hidden_shape + [1]
         
         self.weights = nn.ParameterList()
@@ -45,10 +45,11 @@ class MLPKANlayer(nn.Module):
             self.weights.append(w)
             self.biases.append(b)
 
-    def forward(self, x):
+    def forward(self, x, save_activations=False):
+        if save_activations:
+            self.pre_activations = x.detach().cpu()
         batch_size = x.shape[0]
         
-        # FIX 1: Unsqueeze into the middle dimension, not the end
         # Result shape: [In*Out, 1, Batch]
         x = x.T.repeat_interleave(self.output_size, dim=0).unsqueeze(1)
         
@@ -60,12 +61,38 @@ class MLPKANlayer(nn.Module):
             if i < num_layers - 1:
                 x = torch.relu(x)
         
-        # FIX 2: Ensure the view handles the Batch being at the end
         # x is currently [Num_Nets, 1, Batch] because the last layer output_dim is 1
         x = x.view(self.input_size, self.output_size, batch_size)
-        
+        if save_activations:
+            self.post_activations = x.detach().cpu()
         # Sum over input_size (dim 0) -> [output_size, batch_size] -> Transpose to [Batch, Out]
         return x.sum(dim=0).T
+    
+    def plot_activations(self):
+        if self.pre_activations is None or self.post_activations is None:
+            print("No activations saved. Run forward with save_activations=True first.")
+            return
+        import matplotlib.pyplot as plt
+        
+        for i in range(self.input_size):
+            # Sort by input activation and apply the same order to all output activations.
+            sort_idx = torch.argsort(self.pre_activations[:, i])
+            x_sorted = self.pre_activations[sort_idx, i].numpy()
+
+            fig, axes = plt.subplots(self.output_size, 1, figsize=(7, 3 * self.output_size), squeeze=False)
+            axes = axes.ravel()
+
+            for j in range(self.output_size):
+                y_sorted = self.post_activations[i, j, sort_idx].numpy()
+                axes[j].plot(x_sorted, y_sorted)
+                axes[j].set_title(f"Input {i} to Output {j} Activations")
+                axes[j].set_xlabel(f"Input {i}")
+                axes[j].set_ylabel(f"Output {j}")
+                axes[j].grid(True)
+
+            fig.suptitle(f"Activations for Input {i}")
+            fig.tight_layout(rect=[0, 0, 1, 0.97])
+            plt.show()
 
 
 class MLPKAN(nn.Module):
@@ -82,9 +109,14 @@ class MLPKAN(nn.Module):
             layers.append(mlpkan_layer)
         self.layers = nn.Sequential(*layers)
 
-    def forward(self, x):
-        return self.layers(x)
-    
+    def forward(self, x, save_activations=False):
+        if save_activations:
+            for layer in self.layers:
+                x = layer(x, save_activations=save_activations)
+        else:
+            x = self.layers(x)
+        return x
+
     def fit(self, dataset, steps, batch_size=128, lr=1, early_stop=False, optimizer_name='AdamW'):
         device = next(self.parameters()).device
 

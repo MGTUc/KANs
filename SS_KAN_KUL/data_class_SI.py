@@ -8,7 +8,7 @@ Created on Fri Mar 21 10:49:20 2025
 import matplotlib.pyplot as plt
 import torch
 import numpy as np
-import _utils
+import SS_KAN_KUL._utils as _utils
 import nonlinear_benchmarks 
 from scipy import signal
 import scipy.io
