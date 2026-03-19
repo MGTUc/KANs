@@ -84,7 +84,7 @@ class MLPKANlayer(nn.Module):
 
             for j in range(self.output_size):
                 y_sorted = self.post_activations[i, j, sort_idx].numpy()
-                axes[j].plot(x_sorted, y_sorted)
+                axes[j].plot(x_sorted, y_sorted, marker='o', linestyle='-', markersize=4)
                 axes[j].set_title(f"Input {i} to Output {j} Activations")
                 axes[j].set_xlabel(f"Input {i}")
                 axes[j].set_ylabel(f"Output {j}")

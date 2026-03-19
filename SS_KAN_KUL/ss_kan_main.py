@@ -23,8 +23,8 @@ import pandas as pd
 # %%% Set seed
 special_flag = None #use for save in model name
 device = "cpu"
-seed_value = 222
-seed_value=random.randint(1,1111)
+seed_value = 1
+# seed_value=random.randint(1,1111)
 #seed_value = 311 # good seed for 10grid 2 layers Silver
 #seed_value = 1004 # good seef for 5grid 2 layers Silver
 print(f"\nFixed seed value at {seed_value}")
@@ -91,19 +91,22 @@ match nonlinearity_type:
             #base_activation=torch.nn.Identity
         # grid_eps=0.1
         )
+        extra_info_modelname = f"KAN_grid{kan_grid_size}_{seed_value}"
     case "MLPKAN":
+        subnetwork_shape = [7]
         state_kan = FullStateNonlinearityMLPKAN(
             state_kan_input_size,
             state_kan_hidden_layers,
             state_kan_output_size, # Use general kan_hidden_layers config
-            subnetwork_shape = [10]
+            subnetwork_shape = subnetwork_shape
         )
         output_kan = FullStateNonlinearityMLPKAN(
             output_kan_input_size,
             output_kan_hidden_layers, # Use specific hidden layer config
             output_kan_output_size,
-            subnetwork_shape = [10]
+            subnetwork_shape = subnetwork_shape # Use specific grid size config
         )
+        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}"
 
 #state_kan = None
 #output_kan = None 
@@ -123,7 +126,7 @@ model.to(device)
 # %%% Saving/Loading Configuration
 model_save_dir = f"./SS_KAN_KUL/test___model_saves_simple_{state_dim}"  # Directory to save model state dicts
 os.makedirs(model_save_dir, exist_ok=True)
-save_every = 499  # Save model state dict every N epochs (0 to disable intermediate saves)
+save_every = 0  # Save model state dict every N epochs (0 to disable intermediate saves)
 # Set this path to load a specific state_dict before training, or set to None
 
 load_model = False
@@ -167,7 +170,7 @@ if load_model_path:
 learning_rate = 1e-2
 weight_decay = 1e-5
 lr_scheduler_gamma = 0.999  
-num_epochs = 100
+num_epochs = 25
 batch_size = 128
 reg_lambda_l1 = 1e-3
 reg_lambda_l2 = 1e-5
@@ -400,7 +403,7 @@ for epoch in range(num_epochs):
         if test_loss < best_test_loss:
             best_test_loss = test_loss
             best_epoch = epoch
-            new_best_path = os.path.join(model_save_dir, f'best_model_{test_case_name}_epoch_{epoch}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_{nonlinearity_type}.pth')
+            new_best_path = os.path.join(model_save_dir, f'best_model_{test_case_name}_epoch_{epoch}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_{extra_info_modelname}.pth')
             try:
                 torch.save(model.state_dict(), new_best_path)
                 print(f"*** New best model saved with Test Loss: {best_test_loss:.4f} at Epoch {epoch+1} to {new_best_path} ***")
@@ -417,8 +420,10 @@ for epoch in range(num_epochs):
     save_model_flag = (save_every > 0 and (epoch + 1) % save_every == 0) or \
                       (epoch == num_epochs - 1) 
 
+    save_model_flag = False # Disable intermediate saves for now, only save best model
+
     if save_model_flag and special_flag is None:
-        model_name = f'model_{test_case_name}_epoch_{epoch}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_{nonlinearity_type}.pth'
+        model_name = f'model_{test_case_name}_epoch_{epoch}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_{extra_info_modelname}.pth'
         model_save_path = os.path.join(model_save_dir, model_name)
         try:
             torch.save(model.state_dict(), model_save_path)
@@ -426,7 +431,7 @@ for epoch in range(num_epochs):
         except Exception as e:
             print(f"\nError saving model state_dict: {e}")
     elif save_model_flag and special_flag is not None:
-        model_name = f'model_{test_case_name}_epoch_{epoch}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_specialflag_{special_flag}_{nonlinearity_type}.pth'
+        model_name = f'model_{test_case_name}_epoch_{epoch}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_specialflag_{special_flag}_{extra_info_modelname}.pth'
         model_save_path = os.path.join(model_save_dir, model_name)
     
     epoch_time = time.perf_counter() - t0
@@ -437,7 +442,7 @@ t1 = time.perf_counter()
 t_total = t1 - t0
 print(f"\n Training finished in {t_total:.2f} seconds")
 print('restart from save but with update TRUE')
-trainingCSVPath = os.path.join(model_save_dir, f'training_history_{test_case_name}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_{nonlinearity_type}.csv')
+trainingCSVPath = os.path.join(model_save_dir, f'training_history_{test_case_name}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_{extra_info_modelname}.csv')
 interleaved_test_loss = [None] * len(epoch_loss_list_train)
 interleaved_test_r2 = [None] * len(epoch_R2_list_train)
 

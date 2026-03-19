@@ -1,7 +1,7 @@
 from mlpkan import MLPKAN
-# from fastkan import FastKAN
-# from efficient_kan import KAN as EfficientKAN
-# from mlp.MLP import standardMLP
+from fastkan import FastKAN
+from efficient_kan import KAN as EfficientKAN
+from mlp.MLP import standardMLP
 import torch
 import numpy as np
 import random
@@ -41,6 +41,7 @@ def main():
 
     # Load the Feynman dataset
     folder_path = Path('./feynmanDataset')
+    modelname = 'EfficientKAN'
 
     results = []
     for file_path in folder_path.glob('train/*.csv'):
@@ -59,10 +60,15 @@ def main():
             dataset = {'train_input': X_train, 'train_label': y_train, 'test_input': X_test, 'test_label': y_test}
             # # Initialize KAN and fit the model
 
-            kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[5])
-            # kan = FastKAN([X_train.size()[1], 3, 1], num_grids=10)
-            # kan = EfficientKAN([X_train.size()[1], 3, 1])
-            # kan = standardMLP([X_train.size()[1], 8, 8, 1])
+            match modelname:
+                case 'MLPKAN':
+                    kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[10])
+                case 'FastKAN':
+                    kan = FastKAN([X_train.size()[1], 3, 1], num_grids=10)
+                case 'EfficientKAN':
+                    kan = EfficientKAN([X_train.size()[1], 3, 1])
+                case 'standardMLP':
+                    kan = standardMLP([X_train.size()[1], 10, 10, 10, 1])
 
             t0 = time.perf_counter()
             kan.fit(dataset=dataset, steps=500, lr=0.001, early_stop=True);
@@ -77,7 +83,7 @@ def main():
             results.append([function_name, None, None])
 
     results_df = pd.DataFrame(results, columns=['Function', 'R2 Score', 'time'])
-    results_df.to_csv('./feynmantest/kan_feynman_results_FastMLPKAN.csv', index=False)
+    results_df.to_csv(f'./feynmantest/kan_feynman_results_{modelname}.csv', index=False)
 
 
 if __name__ == "__main__":

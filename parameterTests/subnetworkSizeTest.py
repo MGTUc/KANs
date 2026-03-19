@@ -1,6 +1,6 @@
 from mlpkan.MLPKAN import MLPKAN
-# from efficient_kan import KAN as EfficientKAN
-# from mlp.MLP import standardMLP
+from efficient_kan import KAN as EfficientKAN
+from mlp.MLP import standardMLP
 import torch
 import numpy as np
 import random
@@ -58,8 +58,8 @@ def main(subnetwork_shape):
             dataset = {'train_input': X_train, 'train_label': y_train, 'test_input': X_test, 'test_label': y_test}
             # # Initialize KAN and fit the model
 
-            kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=subnetwork_shape)
-            # kan = EfficientKAN([X_train.size()[1], 3, 1])
+            # kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=subnetwork_shape)
+            kan = EfficientKAN([X_train.size()[1], 3, 1], grid_size=subnetwork_shape)
             # kan = standardMLP([X_train.size()[1], 8, 8, 1])
 
             t0 = time.perf_counter()
