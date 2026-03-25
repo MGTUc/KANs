@@ -5,6 +5,8 @@ import torch
 from torch import nn
 import pandas as pd
 from pathlib import Path
+import matplotlib.pyplot as plt
+import os
 
 def R2(preds, targets):
     """
@@ -116,6 +118,159 @@ class MLPKAN(nn.Module):
         else:
             x = self.layers(x)
         return x
+    
+    def plot(self, folder="./figures", beta=3, metric='backward', scale=0.5, tick=False, sample=False, in_vars=None, out_vars=None, title=None, edge_plot_scale=1.0):
+        '''
+        Plot an MLPKAN architecture with per-edge activation function thumbnails.
+
+        Note: this function requires a prior forward pass with save_activations=True.
+        '''
+        from matplotlib.offsetbox import AnnotationBbox, OffsetImage
+
+        _ = beta
+        _ = metric
+
+        missing_acts = [
+            idx
+            for idx, layer in enumerate(self.layers)
+            if layer.pre_activations is None or layer.post_activations is None
+        ]
+        if missing_acts:
+            print(
+                "No activations saved for all layers. "
+                "Run model(x, save_activations=True) before calling plot()."
+            )
+            return None
+
+        os.makedirs(folder, exist_ok=True)
+
+        depth = len(self.layerSizes) - 1
+        for l in range(depth):
+            for i in range(self.layerSizes[l]):
+                for j in range(self.layerSizes[l + 1]):
+                    rank = torch.argsort(self.layers[l].pre_activations[:, i])
+                    x_vals = self.layers[l].pre_activations[:, i][rank].cpu().numpy()
+                    y_vals = self.layers[l].post_activations[i, j, :][rank].cpu().numpy()
+
+                    # Build temporary edge plots off-screen to avoid duplicate figure popups.
+                    edge_plot_scale = max(0.25, float(edge_plot_scale))
+                    with plt.ioff():
+                        fig_edge, ax_edge = plt.subplots(
+                            figsize=(2.2 * edge_plot_scale, 2.2 * edge_plot_scale)
+                        )
+                    if tick:
+                        ax_edge.tick_params(axis="both", labelsize=8)
+                    else:
+                        ax_edge.set_xticks([])
+                        ax_edge.set_yticks([])
+
+                    ax_edge.plot(x_vals, y_vals, color="black", lw=2.0)
+                    if sample:
+                        ax_edge.scatter(x_vals, y_vals, color="black", s=max(2, int(30 * scale)))
+
+                    for spine in ax_edge.spines.values():
+                        spine.set_color("black")
+                        spine.set_linewidth(1.0)
+
+                    fig_edge.savefig(f"{folder}/sp_{l}_{i}_{j}.png", bbox_inches="tight", dpi=220)
+                    plt.close(fig_edge)
+
+        width = self.layerSizes
+        n_layers = len(width)
+        max_nodes = max(width)
+
+        fig_w = max(9.0, 1.8 * max_nodes) * scale * 2.0
+        fig_h = max(6.0, 2.6 * (n_layers - 1)) * scale * 2.0
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+
+        y_layer_pos = np.linspace(0.0, 1.0, n_layers)
+        x_node_pos = []
+        x_margin = 0.08
+        usable_width = 1.0 - 2.0 * x_margin
+        global_step = usable_width / max(max_nodes - 1, 1)
+        for n in width:
+            if n == 1:
+                x = np.array([0.5])
+            else:
+                # Keep per-layer node spacing consistent with the widest layer.
+                span = (n - 1) * global_step
+                left = 0.5 - span / 2.0
+                right = 0.5 + span / 2.0
+                x = np.linspace(left, right, n)
+            x_node_pos.append(x)
+
+        for l in range(n_layers):
+            for i in range(width[l]):
+                ax.scatter(x_node_pos[l][i], y_layer_pos[l], s=120 * scale, color="black", zorder=5)
+
+                if l == 0 and in_vars is not None and i < len(in_vars):
+                    ax.text(
+                        x_node_pos[l][i],
+                        y_layer_pos[l] - 0.04,
+                        str(in_vars[i]),
+                        ha="center",
+                        va="top",
+                        fontsize=max(8, int(10 * scale)),
+                    )
+
+                if l == n_layers - 1 and out_vars is not None and i < len(out_vars):
+                    ax.text(
+                        x_node_pos[l][i],
+                        y_layer_pos[l] + 0.04,
+                        str(out_vars[i]),
+                        ha="center",
+                        va="bottom",
+                        fontsize=max(8, int(10 * scale)),
+                    )
+
+        for l in range(n_layers - 1):
+            y_bottom = y_layer_pos[l]
+            y_top = y_layer_pos[l + 1]
+            y_mid = 0.5 * (y_bottom + y_top)
+            n_in = width[l]
+            n_out = width[l + 1]
+            n_edges = n_in * n_out
+
+            # Place all edge thumbnails for this layer in one horizontal strip.
+            x_strip = np.linspace(0.08, 0.92, n_edges)
+            thumb_centers = {}
+
+            for i in range(n_in):
+                for j in range(n_out):
+                    edge_id = i * n_out + j
+                    x_img = x_strip[edge_id]
+                    y_img = y_mid
+                    thumb_centers[(i, j)] = (x_img, y_img)
+
+                    img_path = f"{folder}/sp_{l}_{i}_{j}.png"
+                    im = plt.imread(img_path)
+
+                    # Adapt thumbnail size by number of edges to reduce visual crowding.
+                    base_zoom = 0.16 * scale * edge_plot_scale
+                    density_zoom = 0.75 / max(n_edges, 1)
+                    image_box = OffsetImage(im, zoom=max(0.045, min(base_zoom, density_zoom)))
+                    ann = AnnotationBbox(image_box, (x_img, y_img), frameon=False, xycoords='data')
+                    ax.add_artist(ann)
+
+            y_gap = 0.055
+            for i in range(n_in):
+                for j in range(n_out):
+                    x_bottom = x_node_pos[l][i]
+                    x_top = x_node_pos[l + 1][j]
+                    x_img, y_img = thumb_centers[(i, j)]
+
+                    ax.plot([x_bottom, x_img], [y_bottom, y_img - y_gap], color="black", lw=0.9, alpha=0.9)
+                    ax.plot([x_img, x_top], [y_img + y_gap, y_top], color="black", lw=0.9, alpha=0.9)
+
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(-0.08, 1.08)
+        ax.axis("off")
+
+        if title is not None:
+            ax.set_title(title, fontsize=max(10, int(12 * scale)))
+
+        fig.tight_layout()
+        plt.show()
     
     def plot_activations(self):
         for i, layer in enumerate(self.layers):
