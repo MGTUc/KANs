@@ -18,3 +18,4 @@ from .fastkan import (
     FastKAN,
     AttentionWithFastKANTransform,
 )
+from .SSFastKAN import FullStateNonlinearityFastKAN

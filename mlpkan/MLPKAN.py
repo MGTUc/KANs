@@ -50,7 +50,7 @@ class MLPKANlayer(nn.Module):
             self.pre_activations = x.detach().cpu()
         batch_size = x.shape[0]
         
-        # Result shape: [In*Out, 1, Batch]
+        # Result shape: [In*Out N, 1, Batch]
         x = x.T.repeat_interleave(self.output_size, dim=0).unsqueeze(1)
         
         num_layers = len(self.weights)
@@ -68,7 +68,7 @@ class MLPKANlayer(nn.Module):
         # Sum over input_size (dim 0) -> [output_size, batch_size] -> Transpose to [Batch, Out]
         return x.sum(dim=0).T
     
-    def plot_activations(self):
+    def plot_activations(self, layer_idx):
         if self.pre_activations is None or self.post_activations is None:
             print("No activations saved. Run forward with save_activations=True first.")
             return
@@ -79,7 +79,7 @@ class MLPKANlayer(nn.Module):
             sort_idx = torch.argsort(self.pre_activations[:, i])
             x_sorted = self.pre_activations[sort_idx, i].numpy()
 
-            fig, axes = plt.subplots(self.output_size, 1, figsize=(7, 3 * self.output_size), squeeze=False)
+            fig, axes = plt.subplots(1, self.output_size, figsize=(5 * self.output_size, 4), squeeze=False)
             axes = axes.ravel()
 
             for j in range(self.output_size):
@@ -90,7 +90,7 @@ class MLPKANlayer(nn.Module):
                 axes[j].set_ylabel(f"Output {j}")
                 axes[j].grid(True)
 
-            fig.suptitle(f"Activations for Input {i}")
+            fig.suptitle(f"Activations for Input {i} Layer {layer_idx}")
             fig.tight_layout(rect=[0, 0, 1, 0.97])
             plt.show()
 
@@ -116,6 +116,10 @@ class MLPKAN(nn.Module):
         else:
             x = self.layers(x)
         return x
+    
+    def plot_activations(self):
+        for i, layer in enumerate(self.layers):
+            layer.plot_activations(layer_idx=i)
 
     def fit(self, dataset, steps, batch_size=128, lr=1, early_stop=False, optimizer_name='AdamW'):
         device = next(self.parameters()).device

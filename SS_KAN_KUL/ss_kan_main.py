@@ -15,6 +15,7 @@ import SS_KAN_KUL._utils as _utils
 from SS_KAN_KUL.data_class_SI import SystemIdentificationDataset
 from SS_KAN_KUL.model_state_space import FullStateNonlinearityKAN, StateSpaceKANModel
 from mlpkan import FullStateNonlinearityMLPKAN
+from fastkan import FullStateNonlinearityFastKAN
 import time
 import os
 import pandas as pd
@@ -58,19 +59,19 @@ input_dim = dataset.u_dim
 output_dim = dataset.y_dim
 # Input KAN
 state_kan_input_size = state_dim + input_dim
-state_kan_hidden_layers = [2] # Hidden layers for state KAN
+state_kan_hidden_layers = [] # Hidden layers for state KAN
 state_kan_output_size = state_dim
 
 
 # Output KAN
 output_kan_input_size = state_dim + input_dim
-output_kan_hidden_layers = [2] # Hidden layers for output KAN
+output_kan_hidden_layers = [] # Hidden layers for output KAN
 output_kan_output_size = output_dim 
 
 
 # %%% model call
 # Instantiate state KAN (ensure params match)
-nonlinearity_type = "MLPKAN" # Choose between "KAN" and "MLPKAN"
+nonlinearity_type = "MLPKAN" # Choose between "KAN", "MLPKAN", "FastKAN"
 match nonlinearity_type:
     case "KAN":
         kan_grid_size = 5
@@ -89,11 +90,11 @@ match nonlinearity_type:
             grid_size=output_kan_grid_size, # Use specific grid size config
             grid_range=[-1,1],
             #base_activation=torch.nn.Identity
-        # grid_eps=0.1
+            # grid_eps=0.1
         )
         extra_info_modelname = f"KAN_grid{kan_grid_size}_{seed_value}"
     case "MLPKAN":
-        subnetwork_shape = [7]
+        subnetwork_shape = [20]
         state_kan = FullStateNonlinearityMLPKAN(
             state_kan_input_size,
             state_kan_hidden_layers,
@@ -106,7 +107,24 @@ match nonlinearity_type:
             output_kan_output_size,
             subnetwork_shape = subnetwork_shape # Use specific grid size config
         )
-        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}"
+        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_nohiddenlayer"
+    case "FastKAN":
+        num_grids = 5
+        output_num_grids = 5
+        state_kan = FullStateNonlinearityFastKAN(
+            state_kan_input_size, 
+            state_kan_hidden_layers, 
+            state_kan_output_size, # Use general kan_hidden_layers config
+            num_grids=num_grids,
+        )
+        output_kan = FullStateNonlinearityFastKAN(
+            output_kan_input_size,
+            output_kan_hidden_layers, # Use specific hidden layer config
+            output_kan_output_size,
+            num_grids=output_num_grids, # Use specific grid size config
+        )
+        extra_info_modelname = f"FastKAN_grid{num_grids}_{seed_value}"
+
 
 #state_kan = None
 #output_kan = None 
@@ -121,7 +139,8 @@ model = StateSpaceKANModel(
     trainable_D=True,
 )
 model.to(device)
-
+total_params = sum(p.numel() for p in model.parameters())
+print(f"Total parameters: {total_params:,}")
 
 # %%% Saving/Loading Configuration
 model_save_dir = f"./SS_KAN_KUL/test___model_saves_simple_{state_dim}"  # Directory to save model state dicts
@@ -136,12 +155,14 @@ if load_model:
             load_model_path = 'C:\\Users\\Maarten\\codeProjects\\KANs\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_24_state_[2]_output_[2]_batch_512_KAN.pth'
         case "MLPKAN":
             load_model_path = 'C:\\Users\\Maarten\\codeProjects\\KANs\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_24_state_[2]_output_[2]_batch_512_MLPKAN.pth'
+        case "FastKAN":
+            load_model_path = 'C:\\Users\\Maarten\\codeProjects\\KANs\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_24_state_[2]_output_[2]_batch_512_FastKAN.pth'
 else:    
     load_model_path = None
 #load_model_path = 'test___model_saves_simple_2/model_Silverbox_epoch_99_state_[2]_output_[2]_batch_64_highL1.pth'
 #load_model_path = 'model_saves_simple_1/best_model_Luca-Airfoil-CFD_epoch_989_state_[3]_output_[3]_batch_512_0.pth'
 print(f"loading model:{load_model_path}")
-save_best_model = False # <-- Add this flag to enable saving the best model
+save_best_model = True # <-- Add this flag to enable saving the best model
 # %%% Load model (if)
 if load_model_path:
     if os.path.isfile(load_model_path):
@@ -170,7 +191,7 @@ if load_model_path:
 learning_rate = 1e-2
 weight_decay = 1e-5
 lr_scheduler_gamma = 0.999  
-num_epochs = 25
+num_epochs = 50
 batch_size = 128
 reg_lambda_l1 = 1e-3
 reg_lambda_l2 = 1e-5
