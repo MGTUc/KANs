@@ -103,7 +103,8 @@ class MLPKAN(nn.Module):
         self.subnetwork_shape = subnetwork_shape
 
         self.layerSizes = layerSizes
-
+        self.edge_attribution_scores = [[[1.0 for _ in range(layerSizes[l+1])] for _ in range(layerSizes[l])] for l in range(len(layerSizes)-1)]
+        self.node_attribution_scores = [[1.0 for _ in range(layerSizes[i])] for i in range(len(layerSizes))]
         layers = []
 
         for i in range(len(layerSizes)-1):
@@ -119,7 +120,7 @@ class MLPKAN(nn.Module):
             x = self.layers(x)
         return x
     
-    def plot(self, folder="./figures", beta=3, metric='backward', scale=0.5, tick=False, sample=False, in_vars=None, out_vars=None, title=None, edge_plot_scale=1.0):
+    def plot(self, folder="./figures", attribution_score_alpha=True, scale=0.5, tick=False, sample=False, in_vars=None, out_vars=None, title=None, edge_plot_scale=1.5):
         '''
         Plot an MLPKAN architecture with per-edge activation function thumbnails.
 
@@ -127,8 +128,28 @@ class MLPKAN(nn.Module):
         '''
         from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 
-        _ = beta
-        _ = metric
+        if attribution_score_alpha:
+            for l in reversed(range(len(self.layers) - 1)):
+                for i in range(self.layerSizes[l]):
+                    for j in range(self.layerSizes[l + 1]):
+                        self.edge_attribution_scores[l][i][j] = self.node_attribution_scores[l+1][j] * (torch.std(self.layers[l].post_activations[i, j, :])/(torch.std((self.layers[l].post_activations[:,j,:]).sum(dim=0))) + 1e-8).item()
+                    self.node_attribution_scores[l][i] = sum(self.edge_attribution_scores[l][i][j] for j in range(self.layerSizes[l + 1]))
+                        
+
+
+        # Normalize attribution scores per layer so weak->strong edges show visible opacity gradient
+        # min_alpha = 0.2
+        # for l in range(len(self.layers)):
+        #     if l < len(self.edge_attribution_scores):
+        #         scores = [self.edge_attribution_scores[l][i][j] for i in range(self.layerSizes[l]) for j in range(self.layerSizes[l + 1])]
+        #         if scores:
+        #             min_score = min(scores)
+        #             max_score = max(scores)
+        #             score_range = max_score - min_score + 1e-8
+        #             for i in range(self.layerSizes[l]):
+        #                 for j in range(self.layerSizes[l + 1]):
+        #                     normalized = (self.edge_attribution_scores[l][i][j] - min_score) / score_range
+        #                     self.edge_attribution_scores[l][i][j] = min_alpha + normalized * (1.0 - min_alpha)
 
         missing_acts = [
             idx
@@ -164,9 +185,15 @@ class MLPKAN(nn.Module):
                         ax_edge.set_xticks([])
                         ax_edge.set_yticks([])
 
-                    ax_edge.plot(x_vals, y_vals, color="black", lw=2.0)
+                    if attribution_score_alpha:
+                        ax_edge.plot(x_vals, y_vals, color="black", lw=2.0, alpha=self.edge_attribution_scores[l][i][j])
+                    else:
+                        ax_edge.plot(x_vals, y_vals, color="black", lw=2.0)
                     if sample:
-                        ax_edge.scatter(x_vals, y_vals, color="black", s=max(2, int(30 * scale)))
+                        if attribution_score_alpha:
+                            ax_edge.scatter(x_vals, y_vals, color="black", s=max(2, int(30 * scale)), alpha=self.edge_attribution_scores[l][i][j])
+                        else:
+                            ax_edge.scatter(x_vals, y_vals, color="black", s=max(2, int(30 * scale)))
 
                     for spine in ax_edge.spines.values():
                         spine.set_color("black")
@@ -259,8 +286,13 @@ class MLPKAN(nn.Module):
                     x_top = x_node_pos[l + 1][j]
                     x_img, y_img = thumb_centers[(i, j)]
 
-                    ax.plot([x_bottom, x_img], [y_bottom, y_img - y_gap], color="black", lw=0.9, alpha=0.9)
-                    ax.plot([x_img, x_top], [y_img + y_gap, y_top], color="black", lw=0.9, alpha=0.9)
+                    edge_alpha = self.edge_attribution_scores[l][i][j]
+                    if attribution_score_alpha:
+                        ax.plot([x_bottom, x_img], [y_bottom, y_img - y_gap], color="black", lw=2, alpha=edge_alpha)
+                        ax.plot([x_img, x_top], [y_img + y_gap, y_top], color="black", lw=2, alpha=edge_alpha)
+                    else:
+                        ax.plot([x_bottom, x_img], [y_bottom, y_img - y_gap], color="black", lw=2)
+                        ax.plot([x_img, x_top], [y_img + y_gap, y_top], color="black", lw=2)
 
         ax.set_xlim(0.0, 1.0)
         ax.set_ylim(-0.08, 1.08)
