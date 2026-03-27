@@ -59,13 +59,13 @@ input_dim = dataset.u_dim
 output_dim = dataset.y_dim
 # Input KAN
 state_kan_input_size = state_dim + input_dim
-state_kan_hidden_layers = [] # Hidden layers for state KAN
+state_kan_hidden_layers = [2] # Hidden layers for state KAN
 state_kan_output_size = state_dim
 
 
 # Output KAN
 output_kan_input_size = state_dim + input_dim
-output_kan_hidden_layers = [] # Hidden layers for output KAN
+output_kan_hidden_layers = [2] # Hidden layers for output KAN
 output_kan_output_size = output_dim 
 
 
@@ -94,7 +94,7 @@ match nonlinearity_type:
         )
         extra_info_modelname = f"KAN_grid{kan_grid_size}_{seed_value}"
     case "MLPKAN":
-        subnetwork_shape = [20]
+        subnetwork_shape = [30,30]
         state_kan = FullStateNonlinearityMLPKAN(
             state_kan_input_size,
             state_kan_hidden_layers,
@@ -107,7 +107,7 @@ match nonlinearity_type:
             output_kan_output_size,
             subnetwork_shape = subnetwork_shape # Use specific grid size config
         )
-        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_nohiddenlayer"
+        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_SilU"
     case "FastKAN":
         num_grids = 5
         output_num_grids = 5
@@ -127,7 +127,7 @@ match nonlinearity_type:
 
 
 #state_kan = None
-#output_kan = None 
+output_kan = None 
 model = StateSpaceKANModel(
     dataset.A_init,
     dataset.B_init,
@@ -188,10 +188,10 @@ if load_model_path:
 # batch_size = 512
 # reg_lambda_l1 = 1e-3
 # reg_lambda_l2 = 1e-5
-learning_rate = 1e-2
+learning_rate = 1e-3
 weight_decay = 1e-5
 lr_scheduler_gamma = 0.999  
-num_epochs = 50
+num_epochs = 100
 batch_size = 128
 reg_lambda_l1 = 1e-3
 reg_lambda_l2 = 1e-5
@@ -205,7 +205,7 @@ optimizer = optim.AdamW(
 scheduler = optim.lr_scheduler.ExponentialLR(
     optimizer, gamma=lr_scheduler_gamma
 )
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
 loss_fn = nn.MSELoss()
 # %%% print
 print("\n--- Experiment Configuration ---")
@@ -250,8 +250,6 @@ train_loader = torch.utils.data.DataLoader(
 print("\n--- Training Start ---")
 epoch_loss_list_train = []
 epoch_loss_list_test = []
-epoch_R2_list_train = []
-epoch_R2_list_test = []
 epoch_time_list = []
 # --- Initialize tracking for best model ---
 best_test_loss = float('inf')
@@ -276,7 +274,7 @@ for epoch in range(num_epochs):
         model.train()
 
     batch_loss_list_train = []
-    batch_R2_list_train = []
+    batch_MSE_list_train = []
     progress_bar = tqdm(
         train_loader, desc=f"Epoch {epoch+1}/{num_epochs} (Train)"
     )
@@ -397,22 +395,18 @@ for epoch in range(num_epochs):
         optimizer.step()  # Optimizer step for batch
 
         progress_bar.set_postfix({"loss": f"{loss.item():.4f}"})
-        batch_loss_list_train.append(loss.item())
-        batch_R2_train = _utils.R2(predicted_outputs_batch, batch_target_output)
-        batch_R2_list_train.append(batch_R2_train)
+        batch_loss_list_train.append(loss_output.item())
 
     avg_epoch_loss = float(np.mean(batch_loss_list_train))
     epoch_loss_list_train.append(avg_epoch_loss)
-    epoch_R2_list_train.append(np.mean(batch_R2_list_train))
     print(f'Epoch average train loss = {avg_epoch_loss:.4f}')
     scheduler.step()
     
     # Test evaluation trick to avoid too many test evaluations which cost like shit
     test_loss = None
     if (epoch + 1) % test_eval_every == 0:
-        test_loss, test_R2 = _utils.run_test_simulation_and_loss(current_sim_state, model, dataset, device, loss_fn)
+        test_loss = _utils.run_test_simulation_and_loss(current_sim_state, model, dataset, device, loss_fn)
         epoch_loss_list_test.append(test_loss)
-        epoch_R2_list_test.append(test_R2)
         print(f"Epoch {epoch+1} Test Loss: {test_loss:.4f}")
     
     # test_loss = _utils.run_test_simulation_and_loss(current_sim_state, model, dataset, device, loss_fn)
@@ -465,21 +459,16 @@ print(f"\n Training finished in {t_total:.2f} seconds")
 print('restart from save but with update TRUE')
 trainingCSVPath = os.path.join(model_save_dir, f'training_history_{test_case_name}_state_{state_kan_hidden_layers}_output_{output_kan_hidden_layers}_batch_{batch_size}_{extra_info_modelname}.csv')
 interleaved_test_loss = [None] * len(epoch_loss_list_train)
-interleaved_test_r2 = [None] * len(epoch_R2_list_train)
 
 for index, test_value in enumerate(epoch_loss_list_test):
     interleaved_test_loss[((index + 1) * test_eval_every) - 1] = test_value
 
-for index, test_value in enumerate(epoch_R2_list_test):
-    interleaved_test_r2[((index + 1) * test_eval_every) - 1] = test_value
 
 training_history_df = pd.DataFrame({
     'epoch': list(range(1, len(epoch_loss_list_train) + 1)),
     'time': epoch_time_list,
     'train_loss': epoch_loss_list_train,
     'test_loss': interleaved_test_loss,
-    'train_R2': epoch_R2_list_train,
-    'test_R2': interleaved_test_r2
 })
 training_history_df.to_csv(trainingCSVPath, index=False)
 

@@ -460,7 +460,6 @@ def run_test_simulation_and_loss(state_train, model, dataset, device, loss_fn, u
                 pred_test_norm_np, _ = predict_recursive(model, initial_state_test, u_test_norm)
                 pred_test_norm_tensor = torch.tensor(pred_test_norm_np, dtype=torch.float32, device=device)
                 test_loss = loss_fn(pred_test_norm_tensor, y_test_norm)
-                test_R2 = R2(pred_test_norm_tensor, y_test_norm)
 
                 #print(f"    Simulated {len(pred_test_norm_np)} test steps.")
             except Exception as e:
@@ -481,9 +480,8 @@ def run_test_simulation_and_loss(state_train, model, dataset, device, loss_fn, u
             pred_test_norm = torch.cat(output_pred_list_test, dim=0)
 
             test_loss = loss_fn(pred_test_norm, y_test_norm)
-            test_R2 = R2(pred_test_norm, y_test_norm)
             
-    return test_loss, test_R2
+    return test_loss
 
 
 def run_test_simulation_and_loss_pyKAN(state_train, model, dataset, device, loss_fn):
