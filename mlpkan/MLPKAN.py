@@ -61,7 +61,7 @@ class MLPKANlayer(nn.Module):
             x = torch.matmul(self.weights[i], x) + self.biases[i]
             
             if i < num_layers - 1:
-                x = torch.nn.SiLU()(x)
+                x = torch.nn.ReLU()(x)
         
         # x is currently [Num_Nets, 1, Batch] because the last layer output_dim is 1
         x = x.view(self.input_size, self.output_size, batch_size)

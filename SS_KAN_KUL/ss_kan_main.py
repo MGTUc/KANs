@@ -59,13 +59,13 @@ input_dim = dataset.u_dim
 output_dim = dataset.y_dim
 # Input KAN
 state_kan_input_size = state_dim + input_dim
-state_kan_hidden_layers = [2] # Hidden layers for state KAN
+state_kan_hidden_layers = [] # Hidden layers for state KAN
 state_kan_output_size = state_dim
 
 
 # Output KAN
 output_kan_input_size = state_dim + input_dim
-output_kan_hidden_layers = [2] # Hidden layers for output KAN
+output_kan_hidden_layers = [] # Hidden layers for output KAN
 output_kan_output_size = output_dim 
 
 
@@ -94,7 +94,7 @@ match nonlinearity_type:
         )
         extra_info_modelname = f"KAN_grid{kan_grid_size}_{seed_value}"
     case "MLPKAN":
-        subnetwork_shape = [30,30]
+        subnetwork_shape = [200]
         state_kan = FullStateNonlinearityMLPKAN(
             state_kan_input_size,
             state_kan_hidden_layers,
@@ -107,7 +107,7 @@ match nonlinearity_type:
             output_kan_output_size,
             subnetwork_shape = subnetwork_shape # Use specific grid size config
         )
-        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_SilU"
+        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_ReLU_noOut"
     case "FastKAN":
         num_grids = 5
         output_num_grids = 5
@@ -205,7 +205,7 @@ optimizer = optim.AdamW(
 scheduler = optim.lr_scheduler.ExponentialLR(
     optimizer, gamma=lr_scheduler_gamma
 )
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 loss_fn = nn.MSELoss()
 # %%% print
 print("\n--- Experiment Configuration ---")
