@@ -41,11 +41,26 @@ class MLPKANlayer(nn.Module):
             
             # Weight shape: [Num_Nets, Out_Dim, In_Dim]
             # Bias shape:  [Num_Nets, Out_Dim, 1]
-            w = nn.Parameter(torch.randn(self.num_nets, out_dim, in_dim) * 0.1)
+            firstLayer = i == 0
+            lastLayer = i == len(full_shape) - 2
+
+            w = nn.Parameter(self._init_scaled_weights(self.num_nets, out_dim, in_dim, lastLayer, self.input_size))
             b = nn.Parameter(torch.zeros(self.num_nets, out_dim, 1))
             
             self.weights.append(w)
             self.biases.append(b)
+
+    @staticmethod
+    def _init_scaled_weights(num_nets, out_dim, in_dim, lastLayer, input_size):
+        if lastLayer:
+            # Final layer: Xavier-like scaling (sqrt(1/fan_in))
+            
+            std = np.sqrt(2.0 / (in_dim * input_size))
+        else:
+            # Hidden layers: He initialization (sqrt(2/fan_in))
+            std = np.sqrt(2.0 / in_dim)
+        
+        return torch.randn(num_nets, out_dim, in_dim) * std * 0.1
 
     def forward(self, x, save_activations=False):
         if save_activations:
@@ -61,14 +76,14 @@ class MLPKANlayer(nn.Module):
             x = torch.matmul(self.weights[i], x) + self.biases[i]
             
             if i < num_layers - 1:
-                x = torch.nn.ReLU()(x)
+                x = torch.nn.SiLU()(x)
         
         # x is currently [Num_Nets, 1, Batch] because the last layer output_dim is 1
         x = x.view(self.input_size, self.output_size, batch_size)
         if save_activations:
             self.post_activations = x.detach().cpu()
         # Sum over input_size (dim 0) -> [output_size, batch_size] -> Transpose to [Batch, Out]
-        return x.sum(dim=0).T
+        return x.sum(dim=0).T 
     
     def plot_activations(self, layer_idx):
         if self.pre_activations is None or self.post_activations is None:
@@ -129,11 +144,14 @@ class MLPKAN(nn.Module):
         from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 
         if attribution_score_alpha:
-            for l in reversed(range(len(self.layers) - 1)):
+            for l in reversed(range(len(self.layers))):
                 for i in range(self.layerSizes[l]):
                     for j in range(self.layerSizes[l + 1]):
+                        
                         self.edge_attribution_scores[l][i][j] = self.node_attribution_scores[l+1][j] * (torch.std(self.layers[l].post_activations[i, j, :])/(torch.std((self.layers[l].post_activations[:,j,:]).sum(dim=0))) + 1e-8).item()
+                        print(f"attribution for layer {l} edge {i}->{j}: {self.edge_attribution_scores[l][i][j]:.4f}")
                     self.node_attribution_scores[l][i] = sum(self.edge_attribution_scores[l][i][j] for j in range(self.layerSizes[l + 1]))
+                    print(f"attribution for layer {l} node {i}: {self.node_attribution_scores[l][i]:.4f}")
                         
 
 
@@ -150,6 +168,12 @@ class MLPKAN(nn.Module):
         #                 for j in range(self.layerSizes[l + 1]):
         #                     normalized = (self.edge_attribution_scores[l][i][j] - min_score) / score_range
         #                     self.edge_attribution_scores[l][i][j] = min_alpha + normalized * (1.0 - min_alpha)
+        if attribution_score_alpha:
+            max_node_score = max(max(layer) for layer in self.node_attribution_scores) + 1e-8
+            max_edge_score = max(max(max(out_scores) for out_scores in layer) for layer in self.edge_attribution_scores) + 1e-8
+
+            self.node_attribution_scores = [[max(0, min(score/max_node_score, 1.0)) for score in layer_scores] for layer_scores in self.node_attribution_scores]
+            self.edge_attribution_scores = [[[max(0, min(score/max_edge_score, 1.0)) for score in out_scores] for out_scores in layer_scores] for layer_scores in self.edge_attribution_scores]
 
         missing_acts = [
             idx
@@ -166,6 +190,7 @@ class MLPKAN(nn.Module):
         os.makedirs(folder, exist_ok=True)
 
         depth = len(self.layerSizes) - 1
+        thumbnail_zoom = max(0.06, 0.16 * scale * edge_plot_scale)
         for l in range(depth):
             for i in range(self.layerSizes[l]):
                 for j in range(self.layerSizes[l + 1]):
@@ -179,6 +204,7 @@ class MLPKAN(nn.Module):
                         fig_edge, ax_edge = plt.subplots(
                             figsize=(2.2 * edge_plot_scale, 2.2 * edge_plot_scale)
                         )
+                    fig_edge.subplots_adjust(left=0.16, right=0.96, bottom=0.16, top=0.96)
                     if tick:
                         ax_edge.tick_params(axis="both", labelsize=8)
                     else:
@@ -186,12 +212,14 @@ class MLPKAN(nn.Module):
                         ax_edge.set_yticks([])
 
                     if attribution_score_alpha:
-                        ax_edge.plot(x_vals, y_vals, color="black", lw=2.0, alpha=self.edge_attribution_scores[l][i][j])
+                        edge_alpha = max(0.0, min(1.0, self.edge_attribution_scores[l][i][j]))
+                        ax_edge.plot(x_vals, y_vals, color="black", lw=2.0, alpha=edge_alpha)
                     else:
                         ax_edge.plot(x_vals, y_vals, color="black", lw=2.0)
                     if sample:
                         if attribution_score_alpha:
-                            ax_edge.scatter(x_vals, y_vals, color="black", s=max(2, int(30 * scale)), alpha=self.edge_attribution_scores[l][i][j])
+                            edge_alpha = max(0.0, min(1.0, self.edge_attribution_scores[l][i][j]))
+                            ax_edge.scatter(x_vals, y_vals, color="black", s=max(2, int(30 * scale)), alpha=edge_alpha)
                         else:
                             ax_edge.scatter(x_vals, y_vals, color="black", s=max(2, int(30 * scale)))
 
@@ -199,7 +227,7 @@ class MLPKAN(nn.Module):
                         spine.set_color("black")
                         spine.set_linewidth(1.0)
 
-                    fig_edge.savefig(f"{folder}/sp_{l}_{i}_{j}.png", bbox_inches="tight", dpi=220)
+                    fig_edge.savefig(f"{folder}/sp_{l}_{i}_{j}.png", dpi=220)
                     plt.close(fig_edge)
 
         width = self.layerSizes
@@ -272,10 +300,7 @@ class MLPKAN(nn.Module):
                     img_path = f"{folder}/sp_{l}_{i}_{j}.png"
                     im = plt.imread(img_path)
 
-                    # Adapt thumbnail size by number of edges to reduce visual crowding.
-                    base_zoom = 0.16 * scale * edge_plot_scale
-                    density_zoom = 0.75 / max(n_edges, 1)
-                    image_box = OffsetImage(im, zoom=max(0.045, min(base_zoom, density_zoom)))
+                    image_box = OffsetImage(im, zoom=thumbnail_zoom)
                     ann = AnnotationBbox(image_box, (x_img, y_img), frameon=False, xycoords='data')
                     ax.add_artist(ann)
 
@@ -308,7 +333,51 @@ class MLPKAN(nn.Module):
         for i, layer in enumerate(self.layers):
             layer.plot_activations(layer_idx=i)
 
-    def fit(self, dataset, steps, batch_size=128, lr=1, early_stop=False, optimizer_name='AdamW'):
+    def _collect_grad_stats(self):
+        grad_means = []
+        grad_maxes = []
+        near_zero_counts = []
+        total_counts = []
+
+        for layer in self.layers:
+            if not isinstance(layer, MLPKANlayer):
+                continue
+
+            for param in list(layer.weights) + list(layer.biases):
+                if param.grad is None:
+                    continue
+
+                g = param.grad.detach()
+                abs_g = g.abs()
+                grad_means.append(abs_g.mean().item())
+                grad_maxes.append(abs_g.max().item())
+                near_zero_counts.append((abs_g < 1e-10).sum().item())
+                total_counts.append(abs_g.numel())
+
+        if not grad_means:
+            return {
+                'grad_mean_abs': 0.0,
+                'grad_max_abs': 0.0,
+                'grad_near_zero_frac': 1.0,
+            }
+
+        return {
+            'grad_mean_abs': float(np.mean(grad_means)),
+            'grad_max_abs': float(np.max(grad_maxes)),
+            'grad_near_zero_frac': float(np.sum(near_zero_counts) / max(1, np.sum(total_counts))),
+        }
+
+    def fit(
+        self,
+        dataset,
+        steps,
+        batch_size=128,
+        lr=1,
+        early_stop=False,
+        optimizer_name='AdamW',
+        log_grad_stats=False,
+        grad_stats_every=1,
+    ):
         device = next(self.parameters()).device
 
         train_data = dataset['train_input'].to(device)
@@ -322,11 +391,20 @@ class MLPKAN(nn.Module):
         elif optimizer_name == 'LBFGS':
             optimizer = torch.optim.LBFGS(self.parameters(), lr=lr, line_search_fn="strong_wolfe")
         
-        history = {'rmse_history': [], 'R2_history': []}
+        history = {
+            'rmse_history': [],
+            'R2_history': [],
+            'grad_mean_abs_history': [],
+            'grad_max_abs_history': [],
+            'grad_near_zero_frac_history': [],
+        }
         n_samples = train_data.shape[0]
         
         for t in range(steps):
             self.train()
+            epoch_grad_mean = []
+            epoch_grad_max = []
+            epoch_grad_zero_frac = []
             if optimizer_name == 'AdamW':
                 # Manual batching with shuffling
                 indices = torch.randperm(n_samples, device=device)
@@ -337,6 +415,11 @@ class MLPKAN(nn.Module):
                     pred = self.forward(X)
                     loss = loss_fn(pred, y)
                     loss.backward()
+                    if log_grad_stats:
+                        grad_stats = self._collect_grad_stats()
+                        epoch_grad_mean.append(grad_stats['grad_mean_abs'])
+                        epoch_grad_max.append(grad_stats['grad_max_abs'])
+                        epoch_grad_zero_frac.append(grad_stats['grad_near_zero_frac'])
                     torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                     optimizer.step()
             elif optimizer_name == 'LBFGS':
@@ -345,9 +428,22 @@ class MLPKAN(nn.Module):
                     pred = self.forward(train_data)
                     loss = loss_fn(pred, train_labels)
                     loss.backward()
+                    if log_grad_stats:
+                        grad_stats = self._collect_grad_stats()
+                        epoch_grad_mean.append(grad_stats['grad_mean_abs'])
+                        epoch_grad_max.append(grad_stats['grad_max_abs'])
+                        epoch_grad_zero_frac.append(grad_stats['grad_near_zero_frac'])
                     torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                     return loss
                 optimizer.step(closure)
+
+            if log_grad_stats:
+                mean_abs_grad = float(np.mean(epoch_grad_mean)) if epoch_grad_mean else 0.0
+                max_abs_grad = float(np.max(epoch_grad_max)) if epoch_grad_max else 0.0
+                near_zero_frac = float(np.mean(epoch_grad_zero_frac)) if epoch_grad_zero_frac else 1.0
+                history['grad_mean_abs_history'].append(mean_abs_grad)
+                history['grad_max_abs_history'].append(max_abs_grad)
+                history['grad_near_zero_frac_history'].append(near_zero_frac)
             
             self.eval()
             with torch.no_grad():
@@ -358,7 +454,16 @@ class MLPKAN(nn.Module):
 
                 R2_value = R2(test_pred, test_labels)
                 history['R2_history'].append(R2_value)
-                print(f"Epoch {t+1}/{steps}, RMSE: {rmse_value:.4f}, R2: {R2_value:.4f} ", end='\r',flush=True)
+                if log_grad_stats and ((t + 1) % max(1, grad_stats_every) == 0):
+                    print(
+                        f"Epoch {t+1}/{steps}, RMSE: {rmse_value:.4f}, R2: {R2_value:.4f}, "
+                        f"|grad|_mean: {mean_abs_grad:.2e}, |grad|_max: {max_abs_grad:.2e}, "
+                        f"near-zero grad frac: {near_zero_frac:.3f}",
+                        end='\r',
+                        flush=True,
+                    )
+                else:
+                    print(f"Epoch {t+1}/{steps}, RMSE: {rmse_value:.4f}, R2: {R2_value:.4f} ", end='\r',flush=True)
                 if early_stop and R2_value > 0.99:
                     print(f"\nEarly stopping at epoch {t+1} with R2: {R2_value:.4f}")
                     break

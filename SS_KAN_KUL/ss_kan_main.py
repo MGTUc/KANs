@@ -94,7 +94,7 @@ match nonlinearity_type:
         )
         extra_info_modelname = f"KAN_grid{kan_grid_size}_{seed_value}"
     case "MLPKAN":
-        subnetwork_shape = [200]
+        subnetwork_shape = [30]
         state_kan = FullStateNonlinearityMLPKAN(
             state_kan_input_size,
             state_kan_hidden_layers,
@@ -107,7 +107,7 @@ match nonlinearity_type:
             output_kan_output_size,
             subnetwork_shape = subnetwork_shape # Use specific grid size config
         )
-        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_ReLU_noOut"
+        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_SiLU_noOut"
     case "FastKAN":
         num_grids = 5
         output_num_grids = 5
@@ -126,7 +126,7 @@ match nonlinearity_type:
         extra_info_modelname = f"FastKAN_grid{num_grids}_{seed_value}"
 
 
-#state_kan = None
+# state_kan = None
 output_kan = None 
 model = StateSpaceKANModel(
     dataset.A_init,
@@ -192,14 +192,40 @@ learning_rate = 1e-3
 weight_decay = 1e-5
 lr_scheduler_gamma = 0.999  
 num_epochs = 100
-batch_size = 128
+batch_size = 32
 reg_lambda_l1 = 1e-3
 reg_lambda_l2 = 1e-5
 
 
 # %%% Optimization setup
+# Exclude bias vectors from weight decay.
+decay_params = []
+no_decay_params = []
+for name, param in model.named_parameters():
+    if not param.requires_grad:
+        continue
+    # Handle common names (bias) and custom layouts (e.g. layers.0.biases.0).
+    name_tokens = set(name.split("."))
+    is_bias_like = ("bias" in name_tokens) or ("biases" in name_tokens)
+    if is_bias_like or param.ndim == 1:
+        no_decay_params.append(param)
+    else:
+        decay_params.append(param)
+
+if len(no_decay_params) == 0:
+    print("Warning: no no-decay params found. Check model.named_parameters() naming.")
+
 optimizer = optim.AdamW(
-    model.parameters(), lr=learning_rate, weight_decay=weight_decay
+    [
+        {"params": decay_params, "weight_decay": weight_decay},
+        {"params": no_decay_params, "weight_decay": 0.0},
+    ],
+    lr=learning_rate,
+)
+
+print(
+    f"Optimizer param groups -> decay: {sum(p.numel() for p in decay_params):,} params, "
+    f"no_decay: {sum(p.numel() for p in no_decay_params):,} params"
 )
 # Define learning rate scheduler
 scheduler = optim.lr_scheduler.ExponentialLR(
@@ -330,6 +356,7 @@ for epoch in range(num_epochs):
             sim_state_for_batch = current_sim_state.detach()
             batch_input, batch_target_output = batch_data
             # Recursive prediction within the batch
+            # print("start state:",sim_state_for_batch)
             for t in range(
                 len(batch_input)
             ):  # Iterate through time steps in the batch
@@ -339,6 +366,8 @@ for epoch in range(num_epochs):
                 next_sim_state, output_pred = model(
                     sim_state_for_batch, current_input, update_grid=update_grid_now
                 )
+                # print("current input:",current_input)
+                # print("output and state prediction:",output_pred.item(), next_sim_state)
                 output_pred_list_batch.append(output_pred)
 
                 # Update current combined state for next time step
@@ -346,14 +375,15 @@ for epoch in range(num_epochs):
                 sim_state_for_batch = next_sim_state
                 if update_grid_now and t == 0:
                     update_grid_now = False # Prevent repeated updates within the same batch simulation
-
+                
+            # break
             predicted_outputs_batch = torch.cat(output_pred_list_batch, dim=0)
             current_sim_state = sim_state_for_batch.detach()
 
             loss_output = loss_fn(
                 predicted_outputs_batch, batch_target_output
             )
-
+        # break
         #reg_loss_l1 = kan_model.kan.regularization_loss()
         reg_loss_l1 = model.regularization_loss() # Gets combined loss from active KANs
         reg_loss_l2 = (
@@ -383,7 +413,7 @@ for epoch in range(num_epochs):
         )
         # Option 2: Weight only the output MSE loss 
         #loss = (loss_output * weight) + reg_lambda_l2 * reg_loss_l2 + reg_lambda_l1 * reg_loss_l1
-
+        
         loss.backward()
 
         if torch.isnan(loss) or torch.isinf(loss):
@@ -396,7 +426,7 @@ for epoch in range(num_epochs):
 
         progress_bar.set_postfix({"loss": f"{loss.item():.4f}"})
         batch_loss_list_train.append(loss_output.item())
-
+    # break
     avg_epoch_loss = float(np.mean(batch_loss_list_train))
     epoch_loss_list_train.append(avg_epoch_loss)
     print(f'Epoch average train loss = {avg_epoch_loss:.4f}')
@@ -452,7 +482,8 @@ for epoch in range(num_epochs):
     epoch_time = time.perf_counter() - t0
     epoch_time_list.append(epoch_time)
 
-
+# import sys
+# sys.exit("end")
 t1 = time.perf_counter()
 t_total = t1 - t0
 print(f"\n Training finished in {t_total:.2f} seconds")
