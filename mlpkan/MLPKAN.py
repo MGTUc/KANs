@@ -85,31 +85,7 @@ class MLPKANlayer(nn.Module):
         # Sum over input_size (dim 0) -> [output_size, batch_size] -> Transpose to [Batch, Out]
         return x.sum(dim=0).T 
     
-    def plot_activations(self, layer_idx):
-        if self.pre_activations is None or self.post_activations is None:
-            print("No activations saved. Run forward with save_activations=True first.")
-            return
-        import matplotlib.pyplot as plt
-        
-        for i in range(self.input_size):
-            # Sort by input activation and apply the same order to all output activations.
-            sort_idx = torch.argsort(self.pre_activations[:, i])
-            x_sorted = self.pre_activations[sort_idx, i].numpy()
 
-            fig, axes = plt.subplots(1, self.output_size, figsize=(5 * self.output_size, 4), squeeze=False)
-            axes = axes.ravel()
-
-            for j in range(self.output_size):
-                y_sorted = self.post_activations[i, j, sort_idx].numpy()
-                axes[j].plot(x_sorted, y_sorted, marker='o', linestyle='-', markersize=4)
-                axes[j].set_title(f"Input {i} to Output {j} Activations")
-                axes[j].set_xlabel(f"Input {i}")
-                axes[j].set_ylabel(f"Output {j}")
-                axes[j].grid(True)
-
-            fig.suptitle(f"Activations for Input {i} Layer {layer_idx}")
-            fig.tight_layout(rect=[0, 0, 1, 0.97])
-            plt.show()
 
 
 class MLPKAN(nn.Module):
@@ -329,9 +305,6 @@ class MLPKAN(nn.Module):
         fig.tight_layout()
         plt.show()
     
-    def plot_activations(self):
-        for i, layer in enumerate(self.layers):
-            layer.plot_activations(layer_idx=i)
 
     def _collect_grad_stats(self):
         grad_means = []
