@@ -42,4 +42,4 @@ class FullStateNonlinearityMLPKAN(nn.Module):
         elif state is not None and u is None:            
             inp = state
 
-        return self.kan(inp)
+        return self.kan(inp, save_activations=True)

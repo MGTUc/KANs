@@ -107,7 +107,7 @@ match nonlinearity_type:
             output_kan_output_size,
             subnetwork_shape = subnetwork_shape # Use specific grid size config
         )
-        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_SiLU_noOut"
+        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_SiLU_noOut_reg"
     case "FastKAN":
         num_grids = 5
         output_num_grids = 5
@@ -189,12 +189,12 @@ if load_model_path:
 # reg_lambda_l1 = 1e-3
 # reg_lambda_l2 = 1e-5
 learning_rate = 1e-3
-weight_decay = 1e-5
+weight_decay = 1e-4
 lr_scheduler_gamma = 0.999  
-num_epochs = 100
+num_epochs = 20
 batch_size = 32
-reg_lambda_l1 = 1e-3
-reg_lambda_l2 = 1e-5
+reg_lambda_l1 = 1
+reg_lambda_l2 = 0
 
 
 # %%% Optimization setup
@@ -231,7 +231,7 @@ print(
 scheduler = optim.lr_scheduler.ExponentialLR(
     optimizer, gamma=lr_scheduler_gamma
 )
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 loss_fn = nn.MSELoss()
 # %%% print
 print("\n--- Experiment Configuration ---")
@@ -385,7 +385,7 @@ for epoch in range(num_epochs):
             )
         # break
         #reg_loss_l1 = kan_model.kan.regularization_loss()
-        reg_loss_l1 = model.regularization_loss() # Gets combined loss from active KANs
+        reg_loss_l1 = model.regularization_loss(regularize_activation=0, regularize_entropy=1e-5) # Gets combined loss from active KANs
         reg_loss_l2 = (
             torch.norm(model.A - dataset.A_init) ** 2
             + torch.norm(model.B - dataset.B_init) ** 2

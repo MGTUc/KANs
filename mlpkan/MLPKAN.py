@@ -64,7 +64,8 @@ class MLPKANlayer(nn.Module):
 
     def forward(self, x, save_activations=False):
         if save_activations:
-            self.pre_activations = x.detach().cpu()
+            # Keep graph-connected activations so regularization contributes gradients.
+            self.pre_activations = x
         batch_size = x.shape[0]
         
         # Result shape: [In*Out N, 1, Batch]
@@ -81,7 +82,7 @@ class MLPKANlayer(nn.Module):
         # x is currently [Num_Nets, 1, Batch] because the last layer output_dim is 1
         x = x.view(self.input_size, self.output_size, batch_size)
         if save_activations:
-            self.post_activations = x.detach().cpu()
+            self.post_activations = x
         # Sum over input_size (dim 0) -> [output_size, batch_size] -> Transpose to [Batch, Out]
         return x.sum(dim=0).T 
     
@@ -111,6 +112,25 @@ class MLPKAN(nn.Module):
             x = self.layers(x)
         return x
     
+    def regularization_loss(self, reg_activation = 1, reg_entropy = 1):
+        reg_loss = torch.tensor(0.0, device=next(self.parameters()).device)
+        for layer in self.layers:
+            if not isinstance(layer, MLPKANlayer):
+                continue
+
+            if reg_activation > 0 and layer.post_activations is not None:
+                reg_loss += reg_activation * torch.mean(layer.post_activations**2)
+
+            if reg_entropy > 0 and layer.post_activations is not None:
+                # Compute entropy of activations across the input and output dimension
+                activations = torch.abs(layer.post_activations)
+                p_input = torch.div(activations, activations.sum(dim=0, keepdim=True) + 1e-8)
+                p_output = torch.div(activations, activations.sum(dim=1, keepdim=True) + 1e-8)
+                input_entropy = -torch.sum(p_input * torch.log(p_input + 1e-8), dim=0).mean()
+                output_entropy = -torch.sum(p_output * torch.log(p_output + 1e-8), dim=1).mean()
+                reg_loss += reg_entropy * (input_entropy + output_entropy)
+        return reg_loss
+    
     def plot(self, folder="./figures", attribution_score_alpha=True, scale=0.5, tick=False, sample=False, in_vars=None, out_vars=None, title=None, edge_plot_scale=1.5):
         '''
         Plot an MLPKAN architecture with per-edge activation function thumbnails.
@@ -123,11 +143,9 @@ class MLPKAN(nn.Module):
             for l in reversed(range(len(self.layers))):
                 for i in range(self.layerSizes[l]):
                     for j in range(self.layerSizes[l + 1]):
-                        
                         self.edge_attribution_scores[l][i][j] = self.node_attribution_scores[l+1][j] * (torch.std(self.layers[l].post_activations[i, j, :])/(torch.std((self.layers[l].post_activations[:,j,:]).sum(dim=0))) + 1e-8).item()
-                        print(f"attribution for layer {l} edge {i}->{j}: {self.edge_attribution_scores[l][i][j]:.4f}")
                     self.node_attribution_scores[l][i] = sum(self.edge_attribution_scores[l][i][j] for j in range(self.layerSizes[l + 1]))
-                    print(f"attribution for layer {l} node {i}: {self.node_attribution_scores[l][i]:.4f}")
+                    
                         
 
 
@@ -171,8 +189,8 @@ class MLPKAN(nn.Module):
             for i in range(self.layerSizes[l]):
                 for j in range(self.layerSizes[l + 1]):
                     rank = torch.argsort(self.layers[l].pre_activations[:, i])
-                    x_vals = self.layers[l].pre_activations[:, i][rank].cpu().numpy()
-                    y_vals = self.layers[l].post_activations[i, j, :][rank].cpu().numpy()
+                    x_vals = self.layers[l].pre_activations[:, i][rank].detach().cpu().numpy()
+                    y_vals = self.layers[l].post_activations[i, j, :][rank].detach().cpu().numpy()
 
                     # Build temporary edge plots off-screen to avoid duplicate figure popups.
                     edge_plot_scale = max(0.25, float(edge_plot_scale))
@@ -346,6 +364,8 @@ class MLPKAN(nn.Module):
         steps,
         batch_size=128,
         lr=1,
+        reg_activation=0.0,
+        reg_entropy=0.0,
         early_stop=False,
         optimizer_name='AdamW',
         log_grad_stats=False,
@@ -385,8 +405,9 @@ class MLPKAN(nn.Module):
                     batch_indices = indices[i:i+batch_size]
                     X, y = train_data[batch_indices], train_labels[batch_indices]
                     optimizer.zero_grad()
-                    pred = self.forward(X)
-                    loss = loss_fn(pred, y)
+                    pred = self.forward(X, save_activations=True)
+                    reg_Loss = self.regularization_loss(reg_activation, reg_entropy)
+                    loss = loss_fn(pred, y) + reg_Loss
                     loss.backward()
                     if log_grad_stats:
                         grad_stats = self._collect_grad_stats()
@@ -398,8 +419,9 @@ class MLPKAN(nn.Module):
             elif optimizer_name == 'LBFGS':
                 def closure():
                     optimizer.zero_grad()
-                    pred = self.forward(train_data)
-                    loss = loss_fn(pred, train_labels)
+                    pred = self.forward(train_data, save_activations=True)
+                    reg_Loss = self.regularization_loss(reg_activation, reg_entropy)
+                    loss = loss_fn(pred, train_labels) + reg_Loss
                     loss.backward()
                     if log_grad_stats:
                         grad_stats = self._collect_grad_stats()
@@ -430,7 +452,7 @@ class MLPKAN(nn.Module):
                 if log_grad_stats and ((t + 1) % max(1, grad_stats_every) == 0):
                     print(
                         f"Epoch {t+1}/{steps}, RMSE: {rmse_value:.4f}, R2: {R2_value:.4f}, "
-                        f"|grad|_mean: {mean_abs_grad:.2e}, |grad|_max: {max_abs_grad:.2e}, "
+                        f"reg loss: {reg_Loss.item():.4f}, "
                         f"near-zero grad frac: {near_zero_frac:.3f}",
                         end='\r',
                         flush=True,
