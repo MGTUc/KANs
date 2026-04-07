@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
+import numpy as np
 
 def R2(preds, targets):
     """
@@ -19,12 +21,12 @@ class standardMLP(nn.Module):
     Simple MLP: A standard feedforward neural network with ReLU activations.
     
     Architecture:
-        - For layerSizes=[2, 3, 1]: creates a 2-layer MLP with 2 inputs, 3 hidden units, and 1 output.
+        - For layerSizes=[1, 3, 1]: creates a 2-layer MLP with 1 input, 3 hidden units, and 1 output.
     
     Performance: Baseline for comparison with KAN architectures.
     """
     
-    def __init__(self, layerSizes=[2, 3, 1]):
+    def __init__(self, layerSizes=[1, 3, 1]):
         super().__init__()
         layers = []
         hidden_dims = layerSizes[1:-1]
@@ -37,89 +39,101 @@ class standardMLP(nn.Module):
     def forward(self, x):
         return self.net(x)
     
-    def fit(self, dataset, steps, batch_size=128, lr=1.0, early_stop=False, optimizer_name='AdamW'):
-        """
-        Train the MLPKAN model.
-        
-        Args:
-            dataset: dict with 'train_input', 'train_label', 'test_input', 'test_label'
-            steps: number of training epochs
-            batch_size: batch size for Adam optimizer
-            lr: learning rate
-            early_stop: stop if R² > 0.99
-            optimizer_name: 'Adam' or 'LBFGS'
-        
-        Returns:
-            history: dict with 'rmse_history' and 'R2_history' lists
-        """
+    def fit(
+        self,
+        dataset,
+        steps,
+        batch_size=128,
+        lr=1,
+        weight_decay=0.0,
+        early_stop=None,
+        seed=None,
+    ):
         device = next(self.parameters()).device
 
-        train_input = dataset['train_input'].to(device)
-        train_label = dataset['train_label'].to(device)
-        test_input = dataset['test_input'].to(device)
-        test_label = dataset['test_label'].to(device)
+        train_data = dataset['train_input']
+        train_labels = dataset['train_label']
+        test_data = dataset['test_input'].to(device)
+        test_labels = dataset['test_label'].to(device)
+
+        train_dataset = TensorDataset(train_data, train_labels)
+        pin_memory = device.type == "cuda"
+        data_loader_generator = None
+        if seed is not None:
+            data_loader_generator = torch.Generator(device="cpu")
+            data_loader_generator.manual_seed(seed)
+
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=0,
+            pin_memory=pin_memory,
+            generator=data_loader_generator,
+        )
 
         loss_fn = nn.MSELoss()
+
+        decay_params = []
+        no_decay_params = []
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            # Handle common names (bias) and custom layouts (e.g. layers.0.biases.0).
+            name_tokens = set(name.split("."))
+            is_bias_like = ("bias" in name_tokens) or ("biases" in name_tokens)
+            if is_bias_like or param.ndim == 1:
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+
+        if len(no_decay_params) == 0:
+            print("Warning: no no-decay params found. Check model.named_parameters() naming.")
+
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": decay_params, "weight_decay": weight_decay},
+                {"params": no_decay_params, "weight_decay": 0.0},
+            ],
+            lr=lr,
+        )
+    
         
-        if optimizer_name == 'AdamW':
-            optimizer = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=1e-4)
-        elif optimizer_name == 'LBFGS':
-            optimizer = torch.optim.LBFGS(
-                self.parameters(),
-                lr=lr,
-                line_search_fn="strong_wolfe"
-            )
-        else:
-            raise ValueError(f"Unknown optimizer: {optimizer_name}")
-
-        history = {'rmse_history': [], 'R2_history': []}
-        n_samples = train_input.shape[0]
-
-        for epoch in range(steps):
+        history = {
+            'mse_history_test': [],
+            'mse_history_train': [],
+            'R2_history': [],
+        }
+        for t in range(steps):
             self.train()
+            reg_Loss = torch.tensor(0.0, device=device)
+            for X, y in train_loader:
+                X = X.to(device, non_blocking=pin_memory)
+                y = y.to(device, non_blocking=pin_memory)
+                optimizer.zero_grad()
+                pred = self.forward(X)
+                loss = loss_fn(pred, y)
+                loss.backward()
+                # torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+                optimizer.step()
             
-            if optimizer_name == 'AdamW':
-                # Mini-batch SGD with shuffling
-                indices = torch.randperm(n_samples, device=device)
-                for i in range(0, n_samples, batch_size):
-                    batch_idx = indices[i:i + batch_size]
-                    X_batch = train_input[batch_idx]
-                    y_batch = train_label[batch_idx]
-
-                    optimizer.zero_grad()
-                    pred = self.forward(X_batch)
-                    loss = loss_fn(pred, y_batch)
-                    loss.backward()
-
-                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
-                    optimizer.step()
-                    
-            elif optimizer_name == 'LBFGS':
-                def closure():
-                    optimizer.zero_grad()
-                    pred = self.forward(train_input)
-                    loss = loss_fn(pred, train_label)
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
-                    return loss
-                optimizer.step(closure)
-
-            # Evaluate on test set
             self.eval()
             with torch.no_grad():
-                test_pred = self.forward(test_input)
-                rmse = torch.sqrt(loss_fn(test_pred, test_label)).item()
-                r2 = R2(test_pred, test_label)
-                
-                history['rmse_history'].append(rmse)
-                history['R2_history'].append(r2)
-                
-                print(f"Epoch {epoch + 1}/{steps}, RMSE: {rmse:.4f}, R²: {r2:.4f}", end='\r', flush=True)
-                
-                if early_stop and r2 > 0.99:
-                    print(f"\nEarly stopping at epoch {epoch + 1} with R²: {r2:.4f}")
-                    break
+                test_pred = self(test_data)
+                mse_value = loss_fn(test_pred, test_labels).item()
+                history['mse_history_test'].append(mse_value)
 
+                train_pred = self(train_data)
+                mse_value_train = loss_fn(train_pred, train_labels).item()
+                history['mse_history_train'].append(mse_value_train)
+
+                R2_value = R2(test_pred, test_labels)
+                history['R2_history'].append(R2_value)
+                print(f"Epoch {t+1}/{steps}, MSE: {mse_value:.4f}, R2: {R2_value:.4f} ", end='\r',flush=True)
+                if early_stop and R2_value > early_stop:
+                    print(f"\nEarly stopping at epoch {t+1} with R2: {R2_value:.4f}")
+                    break
+        
         return history
 
     

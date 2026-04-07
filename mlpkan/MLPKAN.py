@@ -3,6 +3,7 @@ import time
 import numpy as np
 import torch
 from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
 import pandas as pd
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -60,7 +61,7 @@ class MLPKANlayer(nn.Module):
             # Hidden layers: He initialization (sqrt(2/fan_in))
             std = np.sqrt(2.0 / in_dim)
         
-        return torch.randn(num_nets, out_dim, in_dim) * std * 0.1
+        return torch.randn(num_nets, out_dim, in_dim) * std
 
     def forward(self, x, save_activations=False):
         if save_activations:
@@ -119,7 +120,7 @@ class MLPKAN(nn.Module):
                 continue
 
             if reg_activation > 0 and layer.post_activations is not None:
-                reg_loss += reg_activation * torch.mean(layer.post_activations**2)
+                reg_loss += reg_activation * torch.mean(torch.abs(layer.post_activations))
 
             if reg_entropy > 0 and layer.post_activations is not None:
                 # Compute entropy of activations across the input and output dimension
@@ -130,6 +131,13 @@ class MLPKAN(nn.Module):
                 output_entropy = -torch.sum(p_output * torch.log(p_output + 1e-8), dim=1).mean()
                 reg_loss += reg_entropy * (input_entropy + output_entropy)
         return reg_loss
+    
+    def get_activation(self, layer_idx, input_idx, output_idx):
+        layer = self.layers[layer_idx]
+        if isinstance(layer, MLPKANlayer) and layer.post_activations is not None:
+            return layer.pre_activations[:, input_idx], layer.post_activations[input_idx, output_idx, :]
+        else:
+            raise ValueError(f"No activations found for layer {layer_idx}. Run forward pass with save_activations=True.")
     
     def plot(self, folder="./figures", attribution_score_alpha=True, scale=0.5, tick=False, sample=False, in_vars=None, out_vars=None, title=None, edge_plot_scale=1.5):
         '''
@@ -281,7 +289,10 @@ class MLPKAN(nn.Module):
             n_edges = n_in * n_out
 
             # Place all edge thumbnails for this layer in one horizontal strip.
-            x_strip = np.linspace(0.08, 0.92, n_edges)
+            if n_edges == 1:
+                x_strip = np.array([0.5])
+            else:
+                x_strip = np.linspace(0.08, 0.92, n_edges)
             thumb_centers = {}
 
             for i in range(n_in):
@@ -364,25 +375,56 @@ class MLPKAN(nn.Module):
         steps,
         batch_size=128,
         lr=1,
+        weight_decay=0.0,
         reg_activation=0.0,
         reg_entropy=0.0,
-        early_stop=False,
-        optimizer_name='AdamW',
+        early_stop=None,
         log_grad_stats=False,
         grad_stats_every=1,
     ):
         device = next(self.parameters()).device
 
-        train_data = dataset['train_input'].to(device)
-        train_labels = dataset['train_label'].to(device)
+        train_data = dataset['train_input']
+        train_labels = dataset['train_label']
         test_data = dataset['test_input'].to(device)
         test_labels = dataset['test_label'].to(device)
 
+        train_dataset = TensorDataset(train_data, train_labels)
+        pin_memory = device.type == "cuda"
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=0,
+            pin_memory=pin_memory,
+        )
+
         loss_fn = nn.MSELoss()
-        if optimizer_name == 'AdamW':
-            optimizer = torch.optim.AdamW(self.parameters(), lr=lr)
-        elif optimizer_name == 'LBFGS':
-            optimizer = torch.optim.LBFGS(self.parameters(), lr=lr, line_search_fn="strong_wolfe")
+
+        decay_params = []
+        no_decay_params = []
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            # Handle common names (bias) and custom layouts (e.g. layers.0.biases.0).
+            name_tokens = set(name.split("."))
+            is_bias_like = ("bias" in name_tokens) or ("biases" in name_tokens)
+            if is_bias_like or param.ndim == 1:
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+
+        if len(no_decay_params) == 0:
+            print("Warning: no no-decay params found. Check model.named_parameters() naming.")
+
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": decay_params, "weight_decay": weight_decay},
+                {"params": no_decay_params, "weight_decay": 0.0},
+            ],
+            lr=lr,
+        )
+    
         
         history = {
             'rmse_history': [],
@@ -391,46 +433,27 @@ class MLPKAN(nn.Module):
             'grad_max_abs_history': [],
             'grad_near_zero_frac_history': [],
         }
-        n_samples = train_data.shape[0]
-        
         for t in range(steps):
             self.train()
             epoch_grad_mean = []
             epoch_grad_max = []
             epoch_grad_zero_frac = []
-            if optimizer_name == 'AdamW':
-                # Manual batching with shuffling
-                indices = torch.randperm(n_samples, device=device)
-                for i in range(0, n_samples, batch_size):
-                    batch_indices = indices[i:i+batch_size]
-                    X, y = train_data[batch_indices], train_labels[batch_indices]
-                    optimizer.zero_grad()
-                    pred = self.forward(X, save_activations=True)
-                    reg_Loss = self.regularization_loss(reg_activation, reg_entropy)
-                    loss = loss_fn(pred, y) + reg_Loss
-                    loss.backward()
-                    if log_grad_stats:
-                        grad_stats = self._collect_grad_stats()
-                        epoch_grad_mean.append(grad_stats['grad_mean_abs'])
-                        epoch_grad_max.append(grad_stats['grad_max_abs'])
-                        epoch_grad_zero_frac.append(grad_stats['grad_near_zero_frac'])
-                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
-                    optimizer.step()
-            elif optimizer_name == 'LBFGS':
-                def closure():
-                    optimizer.zero_grad()
-                    pred = self.forward(train_data, save_activations=True)
-                    reg_Loss = self.regularization_loss(reg_activation, reg_entropy)
-                    loss = loss_fn(pred, train_labels) + reg_Loss
-                    loss.backward()
-                    if log_grad_stats:
-                        grad_stats = self._collect_grad_stats()
-                        epoch_grad_mean.append(grad_stats['grad_mean_abs'])
-                        epoch_grad_max.append(grad_stats['grad_max_abs'])
-                        epoch_grad_zero_frac.append(grad_stats['grad_near_zero_frac'])
-                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
-                    return loss
-                optimizer.step(closure)
+            reg_Loss = torch.tensor(0.0, device=device)
+            for X, y in train_loader:
+                X = X.to(device, non_blocking=pin_memory)
+                y = y.to(device, non_blocking=pin_memory)
+                optimizer.zero_grad()
+                pred = self.forward(X, save_activations=True)
+                reg_Loss = self.regularization_loss(reg_activation, reg_entropy)
+                loss = loss_fn(pred, y) + reg_Loss
+                loss.backward()
+                if log_grad_stats:
+                    grad_stats = self._collect_grad_stats()
+                    epoch_grad_mean.append(grad_stats['grad_mean_abs'])
+                    epoch_grad_max.append(grad_stats['grad_max_abs'])
+                    epoch_grad_zero_frac.append(grad_stats['grad_near_zero_frac'])
+                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+                optimizer.step()
 
             if log_grad_stats:
                 mean_abs_grad = float(np.mean(epoch_grad_mean)) if epoch_grad_mean else 0.0
@@ -459,7 +482,7 @@ class MLPKAN(nn.Module):
                     )
                 else:
                     print(f"Epoch {t+1}/{steps}, RMSE: {rmse_value:.4f}, R2: {R2_value:.4f} ", end='\r',flush=True)
-                if early_stop and R2_value > 0.99:
+                if early_stop and R2_value > early_stop:
                     print(f"\nEarly stopping at epoch {t+1} with R2: {R2_value:.4f}")
                     break
         

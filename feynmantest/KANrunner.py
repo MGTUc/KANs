@@ -22,9 +22,8 @@ def R2(preds, targets):
     r2_score = 1 - (SS_res / (SS_tot + 1e-8))
     return torch.nan_to_num(r2_score)
 
-def main():
+def main(nodes, layers, seed=1):
     # Set random seeds for reproducibility
-    seed = 500
     device = "cpu"
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -32,16 +31,16 @@ def main():
 
     easy_set = {
     "I.12.1", "I.12.4", "I.12.5", "I.14.3", "I.14.4", 
-    "I.18.12", "I.18.14", "I.25.13", "I.26.2", "I.27.6", 
+    "I.18.12", "I.18.16", "I.25.13", "I.26.2", "I.27.6", 
     "I.30.5", "I.43.16", "I.47.23", "II.2.42", "II.3.24", 
-    "II.4.23", "II.8.31", "II.10.9", "II.11.17", "II.15.4", 
+    "II.4.23", "II.8.31", "II.10.9", "II.13.17", "II.15.4", 
     "II.15.5", "II.27.16", "II.27.18", "II.34.11", "II.34.29b", 
     "II.38.3", "II.38.14", "III.7.38", "III.12.43", "III.15.27"
     }
 
     # Load the Feynman dataset
-    folder_path = Path('./feynmanDataset')
-    modelname = 'EfficientKAN'
+    folder_path = Path('./feynmanDatasetSmall')
+    modelname = 'MLPKAN'
 
     results = []
     for file_path in folder_path.glob('train/*.csv'):
@@ -62,7 +61,7 @@ def main():
 
             match modelname:
                 case 'MLPKAN':
-                    kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[10])
+                    kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[nodes] * layers)
                 case 'FastKAN':
                     kan = FastKAN([X_train.size()[1], 3, 1], num_grids=10)
                 case 'EfficientKAN':
@@ -71,20 +70,33 @@ def main():
                     kan = standardMLP([X_train.size()[1], 10, 10, 10, 1])
 
             t0 = time.perf_counter()
-            kan.fit(dataset=dataset, steps=500, lr=0.001, early_stop=True);
+            kan.fit(dataset=dataset, steps=250, lr=1e-2, batch_size=64, early_stop=0.99, log_grad_stats=False, weight_decay=1e-3, reg_activation=0, reg_entropy=0);
             t_KAN = time.perf_counter() - t0
-            y_pred_kan = kan(dataset['test_input'])
-            R2_score_kan = R2(y_pred_kan, dataset['test_label']).item()
 
-            results.append([function_name, R2_score_kan, t_KAN])
+            y_pred_test = kan(dataset['test_input'])
+            y_pred_train = kan(dataset['train_input'])
+            mse_test = torch.nn.MSELoss()(y_pred_test, dataset['test_label']).item()
+            mse_train = torch.nn.MSELoss()(y_pred_train, dataset['train_label']).item()
+            # R2_score_kan = R2(y_pred_kan, dataset['test_label']).item()
+            results.append([function_name, mse_train, mse_test, t_KAN])
 
         except Exception as e:
             print(f"Error processing {file_path.name}: {e}")
-            results.append([function_name, None, None])
+            results.append([function_name, None, None, None])
 
-    results_df = pd.DataFrame(results, columns=['Function', 'R2 Score', 'time'])
-    results_df.to_csv(f'./feynmantest/kan_feynman_results_{modelname}.csv', index=False)
+    return results
 
 
 if __name__ == "__main__":
-    main()
+    nodes = [4,8,16,32,64,128]
+    layers = [1,2,3,4,5]
+    seed = 1
+    results = []
+    for i in layers:
+        for j in nodes:
+            layer_node_results = main(j, i, seed=seed)
+            for r in layer_node_results:
+                row = [i, j] + r
+                results.append(row)
+    results_df = pd.DataFrame(results, columns=['Layers', 'Nodes', 'Function', 'train MSE', 'test MSE', 'time'])
+    results_df.to_csv(f'./feynmantest/MLPKAN_speedtestnodelayer.csv', index=False)
