@@ -119,11 +119,10 @@ class MLPKAN(nn.Module):
             if not isinstance(layer, MLPKANlayer):
                 continue
 
-            if reg_activation > 0 and layer.post_activations is not None:
+            if reg_activation != 0 and layer.post_activations is not None:
                 reg_loss += reg_activation * torch.mean(torch.abs(layer.post_activations))
 
-            if reg_entropy > 0 and layer.post_activations is not None:
-                # Compute entropy of activations across the input and output dimension
+            if reg_entropy != 0 and layer.post_activations is not None:
                 activations = torch.abs(layer.post_activations)
                 p_input = torch.div(activations, activations.sum(dim=0, keepdim=True) + 1e-8)
                 p_output = torch.div(activations, activations.sum(dim=1, keepdim=True) + 1e-8)
@@ -482,7 +481,7 @@ class MLPKAN(nn.Module):
                     )
                 else:
                     print(f"Epoch {t+1}/{steps}, RMSE: {rmse_value:.4f}, R2: {R2_value:.4f} ", end='\r',flush=True)
-                if early_stop and R2_value > early_stop:
+                if early_stop and R2_value >= early_stop:
                     print(f"\nEarly stopping at epoch {t+1} with R2: {R2_value:.4f}")
                     break
         
@@ -510,7 +509,7 @@ if __name__ == "__main__":
     dataset = {'train_input': X_train, 'train_label': y_train, 'test_input': X_test, 'test_label': y_test}
 
     t0 = time.perf_counter()
-    histories = MLPKANmodel.fit(dataset, steps=1000, lr=0.001, early_stop=True, optimizer_name='AdamW')
+    histories = MLPKANmodel.fit(dataset, steps=1000, lr=0.001, early_stop=0.9999, optimizer_name='AdamW')
     t1 = time.perf_counter() - t0
     print(t1)
 
