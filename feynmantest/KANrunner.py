@@ -37,6 +37,27 @@ def main(nodes, layers, seed=1):
     "II.15.5", "II.27.16", "II.27.18", "II.34.11", "II.34.29b", 
     "II.38.3", "II.38.14", "III.7.38", "III.12.43", "III.15.27"
     }
+    medium_set = {
+    "I.10.7", "I.11.19", "I.12.11", "I.12.2", "I.13.12", 
+    "I.13.4", "I.15.10", "I.16.6", "I.18.4", "I.24.6", 
+    "I.29.4", "I.32.5", "I.34.10", "I.34.27", "I.34.8", 
+    "I.38.12", "I.39.10", "I.39.11", "I.43.31", "I.43.43", 
+    "I.48.2", "I.8.14", "II.11.3", "II.21.32", "II.34.2", 
+    "II.34.29a", "II.34.2a", "II.37.1", "II.6.11", "II.8.7", 
+    "III.13.18", "III.14.14", "III.15.12", "III.15.14", "III.17.37", 
+    "III.19.51", "III.4.32", "III.8.54"
+    }
+    hard_set = {
+    "I.6.20", "I.6.20a", "I.6.20b", "I.9.18", "I.15.3t", 
+    "I.15.3x", "I.29.16", "I.30.3", "I.32.17", "I.34.14", 
+    "I.37.4", "I.39.22", "I.40.1", "I.41.16", "I.44.4", 
+    "I.50.26", "II.6.15a", "II.6.15b", "II.11.17", "II.11.20", 
+    "II.11.27", "II.11.28", "II.13.23", "II.13.34", "II.24.17", 
+    "II.35.18", "II.35.21", "II.36.38", "III.4.33", "III.9.52", 
+    "III.10.19", "III.21.20"}
+
+    all_sets = easy_set | medium_set | hard_set
+
 
     # Load the Feynman dataset
     folder_path = Path('./feynmanDatasetSmall')
@@ -44,7 +65,7 @@ def main(nodes, layers, seed=1):
 
     results = []
     for file_path in folder_path.glob('train/*.csv'):
-        if file_path.stem.replace('_train', '') not in easy_set:
+        if file_path.stem.replace('_train', '') not in all_sets:
             continue
         print(f"Processing {file_path.name}")
         try:
@@ -77,19 +98,20 @@ def main(nodes, layers, seed=1):
             y_pred_train = kan(dataset['train_input'])
             mse_test = torch.nn.MSELoss()(y_pred_test, dataset['test_label']).item()
             mse_train = torch.nn.MSELoss()(y_pred_train, dataset['train_label']).item()
-            # R2_score_kan = R2(y_pred_kan, dataset['test_label']).item()
-            results.append([function_name, mse_train, mse_test, t_KAN])
+            R2_score_kan = R2(y_pred_test, dataset['test_label']).item()
+            level = 'Easy' if function_name in easy_set else 'Medium' if function_name in medium_set else 'Hard'
+            results.append([function_name, mse_train, mse_test, R2_score_kan, t_KAN, level])
 
         except Exception as e:
             print(f"Error processing {file_path.name}: {e}")
-            results.append([function_name, None, None, None])
+            results.append([function_name, None, None, None, None, None])
 
     return results
 
 
 if __name__ == "__main__":
-    nodes = [4,8,16,32,64,128]
-    layers = [1,2,3,4,5]
+    nodes = [2,10,18,26,34,42,50,58]
+    layers = [3]
     seed = 1
     results = []
     for i in layers:
@@ -98,5 +120,5 @@ if __name__ == "__main__":
             for r in layer_node_results:
                 row = [i, j] + r
                 results.append(row)
-    results_df = pd.DataFrame(results, columns=['Layers', 'Nodes', 'Function', 'train MSE', 'test MSE', 'time'])
-    results_df.to_csv(f'./feynmantest/MLPKAN_speedtestnodelayer.csv', index=False)
+    results_df = pd.DataFrame(results, columns=['Layers', 'Nodes', 'Function', 'train MSE', 'test MSE', 'R2 Score', 'time', 'Level'])
+    results_df.to_csv(f'./parameterTests/MLPKAN_layer3nodesvariable1.csv', index=False)

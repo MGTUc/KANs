@@ -37,7 +37,7 @@ torch.manual_seed(seed_value)  # PyTorch CPU
 # %%% Data
 test_case_name = "Silverbox"
 test_flag = "arrow_extra"
-norm_flag = "minmax"
+norm_flag = "minmax" #zscore or minmax
 states_available_flag = False
 init_matrices_flag = 'Silverbox'
 
@@ -59,13 +59,13 @@ input_dim = dataset.u_dim
 output_dim = dataset.y_dim
 # Input KAN
 state_kan_input_size = state_dim + input_dim
-state_kan_hidden_layers = [2] # Hidden layers for state KAN
+state_kan_hidden_layers = [] # Hidden layers for state KAN
 state_kan_output_size = state_dim
 
 
 # Output KAN
 output_kan_input_size = state_dim + input_dim
-output_kan_hidden_layers = [2] # Hidden layers for output KAN
+output_kan_hidden_layers = [] # Hidden layers for output KAN
 output_kan_output_size = output_dim 
 
 
@@ -94,7 +94,7 @@ match nonlinearity_type:
         )
         extra_info_modelname = f"KAN_grid{kan_grid_size}_{seed_value}"
     case "MLPKAN":
-        subnetwork_shape = [128,128,128] # Use this for both state and output KANs for simplicity
+        subnetwork_shape = [50,50] # Use this for both state and output KANs for simplicity
         state_kan = FullStateNonlinearityMLPKAN(
             state_kan_input_size,
             state_kan_hidden_layers,
@@ -107,7 +107,7 @@ match nonlinearity_type:
             output_kan_output_size,
             subnetwork_shape = subnetwork_shape # Use specific grid size config
         )
-        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_SiLU_noOut_reg"
+        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_SiLU_noOut_noreg_zscore"
     case "FastKAN":
         num_grids = 5
         output_num_grids = 5
@@ -189,9 +189,9 @@ if load_model_path:
 # reg_lambda_l1 = 1e-3
 # reg_lambda_l2 = 1e-5
 learning_rate = 1e-3
-weight_decay = 1e-4
+weight_decay = 0
 lr_scheduler_gamma = 0.999  
-num_epochs = 50
+num_epochs = 25
 batch_size = 32
 reg_lambda_l1 = 1
 reg_lambda_l2 = 0
@@ -231,7 +231,7 @@ print(
 scheduler = optim.lr_scheduler.ExponentialLR(
     optimizer, gamma=lr_scheduler_gamma
 )
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 loss_fn = nn.MSELoss()
 # %%% print
 print("\n--- Experiment Configuration ---")
@@ -385,7 +385,7 @@ for epoch in range(num_epochs):
             )
         # break
         #reg_loss_l1 = kan_model.kan.regularization_loss()
-        reg_loss_l1 = model.regularization_loss(regularize_activation=0, regularize_entropy=1e-5) # Gets combined loss from active KANs
+        reg_loss_l1 = model.regularization_loss(regularize_activation=0, regularize_entropy=0) # Gets combined loss from active KANs
         reg_loss_l2 = (
             torch.norm(model.A - dataset.A_init) ** 2
             + torch.norm(model.B - dataset.B_init) ** 2

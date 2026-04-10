@@ -50,14 +50,18 @@ class MLPKANlayer(nn.Module):
             
             self.weights.append(w)
             self.biases.append(b)
+        
+        self.subnet_scaling = nn.Parameter(torch.randn(self.num_nets, 1, 1) * 0.01)
+        self.residual_scaling = nn.Parameter(torch.randn(self.num_nets, 1, 1) * 0.01)
 
     @staticmethod
     def _init_scaled_weights(num_nets, out_dim, in_dim, lastLayer, input_size):
         if lastLayer:
             # Final layer: Xavier-like scaling (sqrt(1/fan_in))
             
-            std = np.sqrt(2.0 / (in_dim * input_size))
+            std = np.sqrt(2.0 / (in_dim + out_dim))
         else:
+
             # Hidden layers: He initialization (sqrt(2/fan_in))
             std = np.sqrt(2.0 / in_dim)
         
@@ -71,6 +75,7 @@ class MLPKANlayer(nn.Module):
         
         # Result shape: [In*Out N, 1, Batch]
         x = x.T.repeat_interleave(self.output_size, dim=0).unsqueeze(1)
+        x_init = x
         
         num_layers = len(self.weights)
         for i in range(num_layers):
@@ -80,7 +85,9 @@ class MLPKANlayer(nn.Module):
             if i < num_layers - 1:
                 x = torch.nn.SiLU()(x)
         
+
         # x is currently [Num_Nets, 1, Batch] because the last layer output_dim is 1
+        x = x * self.subnet_scaling + x_init * self.residual_scaling
         x = x.view(self.input_size, self.output_size, batch_size)
         if save_activations:
             self.post_activations = x
