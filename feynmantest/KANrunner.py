@@ -22,7 +22,7 @@ def R2(preds, targets):
     r2_score = 1 - (SS_res / (SS_tot + 1e-8))
     return torch.nan_to_num(r2_score)
 
-def main(nodes, layers, seed=1):
+def main(nodes, layers, grid_size, seed=1):
     # Set random seeds for reproducibility
     device = "cpu"
     torch.manual_seed(seed)
@@ -61,7 +61,7 @@ def main(nodes, layers, seed=1):
 
     # Load the Feynman dataset
     folder_path = Path('./feynmanDatasetSmall')
-    modelname = 'MLPKAN'
+    modelname = 'MLPKAN' # 'MLPKAN', 'FastKAN', 'EfficientKAN', 'standardMLP'
 
     results = []
     for file_path in folder_path.glob('train/*.csv'):
@@ -84,14 +84,14 @@ def main(nodes, layers, seed=1):
                 case 'MLPKAN':
                     kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[nodes] * layers)
                 case 'FastKAN':
-                    kan = FastKAN([X_train.size()[1], 3, 1], num_grids=10)
+                    kan = FastKAN([X_train.size()[1], 3, 1], num_grids=grid_size)
                 case 'EfficientKAN':
-                    kan = EfficientKAN([X_train.size()[1], 3, 1])
+                    kan = EfficientKAN([X_train.size()[1], 3, 1], grid_size=grid_size)
                 case 'standardMLP':
                     kan = standardMLP([X_train.size()[1], 10, 10, 10, 1])
 
             t0 = time.perf_counter()
-            kan.fit(dataset=dataset, steps=250, lr=1e-2, batch_size=64, early_stop=0.99, log_grad_stats=False, weight_decay=1e-3, reg_activation=0, reg_entropy=0);
+            kan.fit(dataset=dataset, steps=250, lr=1e-2, batch_size=128, early_stop=0.99, weight_decay=1e-3, reg_activation=0, reg_entropy=0);
             t_KAN = time.perf_counter() - t0
 
             y_pred_test = kan(dataset['test_input'])
@@ -110,15 +110,26 @@ def main(nodes, layers, seed=1):
 
 
 if __name__ == "__main__":
-    nodes = [2,10,18,26,34,42,50,58]
-    layers = [3]
+    nodes = [2,12,22,32,42,52]
+    layers = [1,2,3,4,5]
     seed = 1
     results = []
     for i in layers:
         for j in nodes:
-            layer_node_results = main(j, i, seed=seed)
+            print(f"%%%%%%%Running with {i} layers and {j} nodes")
+            layer_node_results = main(nodes=j, layers=i, grid_size=None, seed=seed)
             for r in layer_node_results:
                 row = [i, j] + r
                 results.append(row)
     results_df = pd.DataFrame(results, columns=['Layers', 'Nodes', 'Function', 'train MSE', 'test MSE', 'R2 Score', 'time', 'Level'])
-    results_df.to_csv(f'./parameterTests/MLPKAN_layer3nodesvariable1.csv', index=False)
+    results_df.to_csv(f'./parameterTests/MLPKAN_layervariablenodesvariableNormVar.csv', index=False)
+    # grid_sizes = [2, 3, 4, 5, 6, 7, 8, 9, 10]
+    # seed = 1
+    # results = []
+    # for grid_size in grid_sizes:
+    #     grid_results = main(nodes=None, layers=None, grid_size=grid_size, seed=seed)
+    #     for r in grid_results:
+    #         row = [grid_size] + r
+    #         results.append(row)
+    # results_df = pd.DataFrame(results, columns=['Grid Size', 'Function', 'train MSE', 'test MSE', 'R2 Score', 'time', 'Level'])
+    # results_df.to_csv(f'./parameterTests/FastKAN_grid_size_variable.csv', index=False)

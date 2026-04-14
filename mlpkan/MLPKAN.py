@@ -23,7 +23,15 @@ def R2(preds, targets):
     return torch.nan_to_num(r2_score).item()
 
 class MLPKANlayer(nn.Module):
-    def __init__(self, input_size, output_size, subnetwork_hidden_shape=[5, 5]):
+    def __init__(
+        self,
+        input_size,
+        output_size,
+        subnetwork_hidden_shape=[5, 5],
+        residual_connection=False,
+        subnet_scaling_init=1.0,
+        residual_scaling_init=1.0,
+    ):
         super().__init__()
         self.input_size = input_size
         self.output_size = output_size
@@ -42,31 +50,41 @@ class MLPKANlayer(nn.Module):
             
             # Weight shape: [Num_Nets, Out_Dim, In_Dim]
             # Bias shape:  [Num_Nets, Out_Dim, 1]
-            firstLayer = i == 0
             lastLayer = i == len(full_shape) - 2
 
-            w = nn.Parameter(self._init_scaled_weights(self.num_nets, out_dim, in_dim, lastLayer, self.input_size))
+            w = nn.Parameter(self._init_scaled_weights(self.num_nets, out_dim, in_dim, lastLayer))
             b = nn.Parameter(torch.zeros(self.num_nets, out_dim, 1))
             
             self.weights.append(w)
             self.biases.append(b)
         
-        self.subnet_scaling = nn.Parameter(torch.randn(self.num_nets, 1, 1) * 0.01)
-        self.residual_scaling = nn.Parameter(torch.randn(self.num_nets, 1, 1) * 0.01)
+        # self.subnet_scaling = nn.Parameter(
+        #     torch.full((self.num_nets, 1, 1), float(subnet_scaling_init))
+        # )
+        self.subnet_scaling = nn.Parameter(
+            torch.randn(self.num_nets, 1, 1) * np.sqrt(1.0/self.input_size)
+        )
+        if residual_connection:
+            self.residual_scaling = nn.Parameter(
+                torch.full((self.num_nets, 1, 1), float(residual_scaling_init))
+            )
+        else:
+            self.residual_scaling = torch.zeros((self.num_nets, 1, 1))
 
     @staticmethod
-    def _init_scaled_weights(num_nets, out_dim, in_dim, lastLayer, input_size):
-        if lastLayer:
-            # Final layer: Xavier-like scaling (sqrt(1/fan_in))
-            
-            std = np.sqrt(2.0 / (in_dim + out_dim))
-        else:
+    def _init_scaled_weights(num_nets, out_dim, in_dim, lastLayer):
+        # Standard 'He' limit for Uniform distribution
+        # limit = np.sqrt(6.0 / in_dim) if not lastLayer else np.sqrt(3.0 / in_dim)
+        # weights = torch.zeros(num_nets, out_dim, in_dim)
+        # weights.uniform_(-limit, limit)
 
-            # Hidden layers: He initialization (sqrt(2/fan_in))
-            std = np.sqrt(2.0 / in_dim)
-        
-        return torch.randn(num_nets, out_dim, in_dim) * std
+        # standard 'He' normal initialization
+        std = np.sqrt(2.0 / in_dim) if not lastLayer else np.sqrt(1.0 / in_dim)
+        weights = torch.randn(num_nets, out_dim, in_dim) * std 
 
+        # weights = torch.randn(num_nets, out_dim, in_dim)
+        return weights
+    
     def forward(self, x, save_activations=False):
         if save_activations:
             # Keep graph-connected activations so regularization contributes gradients.
@@ -92,13 +110,21 @@ class MLPKANlayer(nn.Module):
         if save_activations:
             self.post_activations = x
         # Sum over input_size (dim 0) -> [output_size, batch_size] -> Transpose to [Batch, Out]
-        return x.sum(dim=0).T 
+        return (x.sum(dim=0)).T 
     
 
 
 
 class MLPKAN(nn.Module):
-    def __init__(self, layerSizes, subnetwork_shape = [2,2]):
+    def __init__(
+        self,
+        layerSizes,
+        subnetwork_shape=[2,2],
+        residual_connection=False,
+        subnet_scaling_init=1.0,
+        subnet_scaling_final=1.0,
+        residual_scaling_init=1.0,
+    ):
         super(MLPKAN, self).__init__()
         self.subnetwork_shape = subnetwork_shape
 
@@ -108,7 +134,14 @@ class MLPKAN(nn.Module):
         layers = []
 
         for i in range(len(layerSizes)-1):
-            mlpkan_layer = MLPKANlayer(input_size=layerSizes[i], output_size=layerSizes[i+1], subnetwork_hidden_shape=self.subnetwork_shape)
+            mlpkan_layer = MLPKANlayer(
+                input_size=layerSizes[i],
+                output_size=layerSizes[i+1],
+                subnetwork_hidden_shape=self.subnetwork_shape,
+                subnet_scaling_init=subnet_scaling_init if i != len(layerSizes)-2 else subnet_scaling_final, # Stronger scaling on earlier layers to encourage learning in deeper layers.
+                residual_scaling_init=residual_scaling_init,
+                residual_connection=residual_connection
+            )
             layers.append(mlpkan_layer)
         self.layers = nn.Sequential(*layers)
 
@@ -341,40 +374,6 @@ class MLPKAN(nn.Module):
         plt.show()
     
 
-    def _collect_grad_stats(self):
-        grad_means = []
-        grad_maxes = []
-        near_zero_counts = []
-        total_counts = []
-
-        for layer in self.layers:
-            if not isinstance(layer, MLPKANlayer):
-                continue
-
-            for param in list(layer.weights) + list(layer.biases):
-                if param.grad is None:
-                    continue
-
-                g = param.grad.detach()
-                abs_g = g.abs()
-                grad_means.append(abs_g.mean().item())
-                grad_maxes.append(abs_g.max().item())
-                near_zero_counts.append((abs_g < 1e-10).sum().item())
-                total_counts.append(abs_g.numel())
-
-        if not grad_means:
-            return {
-                'grad_mean_abs': 0.0,
-                'grad_max_abs': 0.0,
-                'grad_near_zero_frac': 1.0,
-            }
-
-        return {
-            'grad_mean_abs': float(np.mean(grad_means)),
-            'grad_max_abs': float(np.max(grad_maxes)),
-            'grad_near_zero_frac': float(np.sum(near_zero_counts) / max(1, np.sum(total_counts))),
-        }
-
     def fit(
         self,
         dataset,
@@ -385,8 +384,6 @@ class MLPKAN(nn.Module):
         reg_activation=0.0,
         reg_entropy=0.0,
         early_stop=None,
-        log_grad_stats=False,
-        grad_stats_every=1,
     ):
         device = next(self.parameters()).device
 
@@ -435,15 +432,9 @@ class MLPKAN(nn.Module):
         history = {
             'rmse_history': [],
             'R2_history': [],
-            'grad_mean_abs_history': [],
-            'grad_max_abs_history': [],
-            'grad_near_zero_frac_history': [],
         }
         for t in range(steps):
             self.train()
-            epoch_grad_mean = []
-            epoch_grad_max = []
-            epoch_grad_zero_frac = []
             reg_Loss = torch.tensor(0.0, device=device)
             for X, y in train_loader:
                 X = X.to(device, non_blocking=pin_memory)
@@ -453,21 +444,9 @@ class MLPKAN(nn.Module):
                 reg_Loss = self.regularization_loss(reg_activation, reg_entropy)
                 loss = loss_fn(pred, y) + reg_Loss
                 loss.backward()
-                if log_grad_stats:
-                    grad_stats = self._collect_grad_stats()
-                    epoch_grad_mean.append(grad_stats['grad_mean_abs'])
-                    epoch_grad_max.append(grad_stats['grad_max_abs'])
-                    epoch_grad_zero_frac.append(grad_stats['grad_near_zero_frac'])
                 torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                 optimizer.step()
 
-            if log_grad_stats:
-                mean_abs_grad = float(np.mean(epoch_grad_mean)) if epoch_grad_mean else 0.0
-                max_abs_grad = float(np.max(epoch_grad_max)) if epoch_grad_max else 0.0
-                near_zero_frac = float(np.mean(epoch_grad_zero_frac)) if epoch_grad_zero_frac else 1.0
-                history['grad_mean_abs_history'].append(mean_abs_grad)
-                history['grad_max_abs_history'].append(max_abs_grad)
-                history['grad_near_zero_frac_history'].append(near_zero_frac)
             
             self.eval()
             with torch.no_grad():
@@ -478,16 +457,7 @@ class MLPKAN(nn.Module):
 
                 R2_value = R2(test_pred, test_labels)
                 history['R2_history'].append(R2_value)
-                if log_grad_stats and ((t + 1) % max(1, grad_stats_every) == 0):
-                    print(
-                        f"Epoch {t+1}/{steps}, RMSE: {rmse_value:.4f}, R2: {R2_value:.4f}, "
-                        f"reg loss: {reg_Loss.item():.4f}, "
-                        f"near-zero grad frac: {near_zero_frac:.3f}",
-                        end='\r',
-                        flush=True,
-                    )
-                else:
-                    print(f"Epoch {t+1}/{steps}, RMSE: {rmse_value:.4f}, R2: {R2_value:.4f} ", end='\r',flush=True)
+                print(f"Epoch {t+1}/{steps}, RMSE: {rmse_value:.4f}, R2: {R2_value:.4f} ", end='\r',flush=True)
                 if early_stop and R2_value >= early_stop:
                     print(f"\nEarly stopping at epoch {t+1} with R2: {R2_value:.4f}")
                     break

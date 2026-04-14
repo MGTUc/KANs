@@ -17,6 +17,22 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import math
+from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
+
+def R2(preds, targets):
+    """
+    Coefficient of Determination (R²).
+    Note: R² can be negative if predictions are worse than the mean baseline.
+    R² = 1 - (SS_res / SS_tot)
+    """
+    pred_mean = torch.mean(preds, dim=0, keepdim=True)
+    target_mean = torch.mean(targets, dim=0, keepdim=True)
+    SS_res = torch.sum((targets - preds)**2, dim=0)
+    SS_tot = torch.sum((targets - target_mean)**2, dim=0)
+    r2_score = 1 - (SS_res / (SS_tot + 1e-8))
+    return torch.nan_to_num(r2_score).item()
+
 
 
 class KANLinear(torch.nn.Module):
@@ -296,61 +312,58 @@ class KAN(torch.nn.Module):
         )
     
     
-    def fit(self, dataset, steps, batch_size=128, lr=1e-3, early_stop=False, optimizer_name='AdamW'):
-
-        def R2(preds, targets):
-            """
-            Coefficient of Determination (R²).
-            Note: R² can be negative if predictions are worse than the mean baseline.
-            R² = 1 - (SS_res / SS_tot)
-            """
-            pred_mean = torch.mean(preds, dim=0, keepdim=True)
-            target_mean = torch.mean(targets, dim=0, keepdim=True)
-            SS_res = torch.sum((targets - preds)**2, dim=0)
-            SS_tot = torch.sum((targets - target_mean)**2, dim=0)
-            r2_score = 1 - (SS_res / (SS_tot + 1e-8))
-            return torch.nan_to_num(r2_score).item()
-        
+    def fit(
+        self,
+        dataset,
+        steps,
+        batch_size=128,
+        lr=1,
+        weight_decay=0.0,
+        reg_activation=0.0,
+        reg_entropy=0.0,
+        early_stop=None,
+    ):
         device = next(self.parameters()).device
 
-        train_data = dataset['train_input'].to(device)
-        train_labels = dataset['train_label'].to(device)
+        train_data = dataset['train_input']
+        train_labels = dataset['train_label']
         test_data = dataset['test_input'].to(device)
         test_labels = dataset['test_label'].to(device)
 
-        loss_fn = torch.nn.MSELoss()
-        if optimizer_name == 'AdamW':
-            optimizer = optim.AdamW(self.parameters(), lr=lr, weight_decay=1e-4)
-            # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.8)
-        elif optimizer_name == 'LBFGS':
-            optimizer = torch.optim.LBFGS(self.parameters(), lr=lr, line_search_fn="strong_wolfe")
+        train_dataset = TensorDataset(train_data, train_labels)
+        pin_memory = device.type == "cuda"
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=0,
+            pin_memory=pin_memory,
+        )
+
+        loss_fn = nn.MSELoss()
+
+        optimizer = optim.AdamW(self.parameters(), lr=lr, weight_decay=weight_decay)
+    
         
-        history = {'rmse_history': [], 'R2_history': []}
-        n_samples = train_data.shape[0]
-        
+        history = {
+            'rmse_history': [],
+            'R2_history': [],
+        }
         for t in range(steps):
             self.train()
-            if optimizer_name == 'AdamW':
-                # Manual batching with shuffling
-                indices = torch.randperm(n_samples, device=device)
-                for i in range(0, n_samples, batch_size):
-                    batch_indices = indices[i:i+batch_size]
-                    X, y = train_data[batch_indices], train_labels[batch_indices]
-                    optimizer.zero_grad()
-                    pred = self.forward(X)
-                    loss = loss_fn(pred, y)
-                    loss.backward()
-                    optimizer.step()
-                    # scheduler.step()
-            elif optimizer_name == 'LBFGS':
-                def closure():
-                    optimizer.zero_grad()
-                    pred = self.forward(train_data)
-                    loss = loss_fn(pred, train_labels)
-                    loss.backward()
-                    return loss
-                optimizer.step(closure)
+            reg_Loss = torch.tensor(0.0, device=device)
+            for X, y in train_loader:
+                X = X.to(device, non_blocking=pin_memory)
+                y = y.to(device, non_blocking=pin_memory)
+                optimizer.zero_grad()
+                pred = self.forward(X)
+                reg_Loss = self.regularization_loss(reg_activation, reg_entropy)
+                loss = loss_fn(pred, y) + reg_Loss
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+                optimizer.step()
 
+            
             self.eval()
             with torch.no_grad():
                 test_pred = self(test_data)
@@ -361,11 +374,8 @@ class KAN(torch.nn.Module):
                 R2_value = R2(test_pred, test_labels)
                 history['R2_history'].append(R2_value)
                 print(f"Epoch {t+1}/{steps}, RMSE: {rmse_value:.4f}, R2: {R2_value:.4f} ", end='\r',flush=True)
-                if early_stop and R2_value > 0.99:
+                if early_stop and R2_value >= early_stop:
                     print(f"\nEarly stopping at epoch {t+1} with R2: {R2_value:.4f}")
                     break
-
+        
         return history
-            
-
-

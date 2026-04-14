@@ -159,8 +159,36 @@ class SystemIdentificationDataset:
         y_test = torch.tensor(y_test, dtype=torch.float32,device=self.device)
         t_test = torch.arange(len(y_test), dtype=torch.float32,device=self.device) * self.dt
         self.t_test = t_test
-        y_test_norm, _, _, _ = _utils.normalize_data(y_test, norm_type=norm_flag, normalize=True, data_min=self.x_min, data_max=self.x_max)
-        u_test_norm, _, _, _ = _utils.normalize_data(u_test, norm_type=norm_flag, normalize=True, data_min=self.u_min, data_max=self.u_max)
+        if norm_flag == 'zscore':
+            y_test_norm, _, _, _ = _utils.normalize_data(
+                y_test,
+                norm_type=norm_flag,
+                normalize=True,
+                data_mean=self.x_min,
+                data_std=self.x_max,
+            )
+            u_test_norm, _, _, _ = _utils.normalize_data(
+                u_test,
+                norm_type=norm_flag,
+                normalize=True,
+                data_mean=self.u_min,
+                data_std=self.u_max,
+            )
+        else:
+            y_test_norm, _, _, _ = _utils.normalize_data(
+                y_test,
+                norm_type=norm_flag,
+                normalize=True,
+                data_min=self.x_min,
+                data_max=self.x_max,
+            )
+            u_test_norm, _, _, _ = _utils.normalize_data(
+                u_test,
+                norm_type=norm_flag,
+                normalize=True,
+                data_min=self.u_min,
+                data_max=self.u_max,
+            )
 
 
         if self.states_available is True:
@@ -168,7 +196,22 @@ class SystemIdentificationDataset:
             x_dot_test[1:-1] = (y_test[2:] - y_test[:-2]) / (2 * self.dt)
             x_dot_test[0] = (y_test[1] - y_test[0]) / self.dt
             x_dot_test[-1] = (y_test[-1] - y_test[-2]) / self.dt
-            x_dot_test_norm, _, _, _ = _utils.normalize_data(x_dot_test, norm_type=norm_flag, normalize=True, data_min=self.x_dot_min, data_max=self.x_dot_max)
+            if norm_flag == 'zscore':
+                x_dot_test_norm, _, _, _ = _utils.normalize_data(
+                    x_dot_test,
+                    norm_type=norm_flag,
+                    normalize=True,
+                    data_mean=self.x_dot_min,
+                    data_std=self.x_dot_max,
+                )
+            else:
+                x_dot_test_norm, _, _, _ = _utils.normalize_data(
+                    x_dot_test,
+                    norm_type=norm_flag,
+                    normalize=True,
+                    data_min=self.x_dot_min,
+                    data_max=self.x_dot_max,
+                )
             X_test_norm = torch.cat((y_test_norm, x_dot_test_norm), dim=-1)
             self.X_test_norm = X_test_norm
             self.X_dim = X_test_norm.size()[1]

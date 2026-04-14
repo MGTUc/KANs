@@ -52,6 +52,10 @@ dataset = SystemIdentificationDataset(
     init_matrices_flag=init_matrices_flag,
 )
 
+# print(dataset.u_train_norm.mean(), dataset.u_train_norm.std())
+# print(dataset.y_train_norm.mean(), dataset.y_train_norm.std())
+# print(dataset.u_train_norm.min(), dataset.u_train_norm.max())
+# print(dataset.y_train_norm.min(), dataset.y_train_norm.max())
 
 # %%% KAN
 state_dim = dataset.A_init.shape[0]
@@ -94,7 +98,7 @@ match nonlinearity_type:
         )
         extra_info_modelname = f"KAN_grid{kan_grid_size}_{seed_value}"
     case "MLPKAN":
-        subnetwork_shape = [50,50] # Use this for both state and output KANs for simplicity
+        subnetwork_shape = [10,10] # Use this for both state and output KANs for simplicity
         state_kan = FullStateNonlinearityMLPKAN(
             state_kan_input_size,
             state_kan_hidden_layers,
@@ -107,7 +111,7 @@ match nonlinearity_type:
             output_kan_output_size,
             subnetwork_shape = subnetwork_shape # Use specific grid size config
         )
-        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_SiLU_noOut_noreg_zscore"
+        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_SiLU_noOut_noreg_{norm_flag}"
     case "FastKAN":
         num_grids = 5
         output_num_grids = 5
@@ -192,7 +196,7 @@ learning_rate = 1e-3
 weight_decay = 0
 lr_scheduler_gamma = 0.999  
 num_epochs = 25
-batch_size = 32
+batch_size = 128
 reg_lambda_l1 = 1
 reg_lambda_l2 = 0
 
@@ -231,7 +235,7 @@ print(
 scheduler = optim.lr_scheduler.ExponentialLR(
     optimizer, gamma=lr_scheduler_gamma
 )
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 loss_fn = nn.MSELoss()
 # %%% print
 print("\n--- Experiment Configuration ---")

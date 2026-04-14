@@ -85,9 +85,14 @@ def load_and_preprocess_data(test_case='Silverbox',test_flag=None,norm_flag='min
     x_dot_test[-1] = (y_test[-1] - y_test[-2]) / dt
 
     # Normalize test data using the same min/max values from training data to maintain consistency
-    y_test_norm, _, _, _ = normalize_data(y_test, norm_type=norm_flag, normalize=True, data_min=x_min, data_max=x_max)
-    x_dot_test_norm, _, _, _ = normalize_data(x_dot_test, norm_type=norm_flag, normalize=True, data_min=x_dot_min, data_max=x_dot_max)
-    u_test_norm, _, _, _ = normalize_data(u_test, norm_type=norm_flag, normalize=True, data_min=u_min, data_max=u_max)
+    if norm_flag == 'zscore':
+        y_test_norm, _, _, _ = normalize_data(y_test, norm_type=norm_flag, normalize=True, data_mean=x_min, data_std=x_max)
+        x_dot_test_norm, _, _, _ = normalize_data(x_dot_test, norm_type=norm_flag, normalize=True, data_mean=x_dot_min, data_std=x_dot_max)
+        u_test_norm, _, _, _ = normalize_data(u_test, norm_type=norm_flag, normalize=True, data_mean=u_min, data_std=u_max)
+    else:
+        y_test_norm, _, _, _ = normalize_data(y_test, norm_type=norm_flag, normalize=True, data_min=x_min, data_max=x_max)
+        x_dot_test_norm, _, _, _ = normalize_data(x_dot_test, norm_type=norm_flag, normalize=True, data_min=x_dot_min, data_max=x_dot_max)
+        u_test_norm, _, _, _ = normalize_data(u_test, norm_type=norm_flag, normalize=True, data_min=u_min, data_max=u_max)
     X_test_norm = torch.cat((y_test_norm, x_dot_test_norm), dim=-1)
 
     # Return a dictionary of processed data and normalization parameters for use in training and evaluation.
