@@ -22,7 +22,7 @@ def R2(preds, targets):
     r2_score = 1 - (SS_res / (SS_tot + 1e-8))
     return torch.nan_to_num(r2_score)
 
-def main(nodes, layers, grid_size, seed=1):
+def main(nodes, layers, grid_size, main_network_layers=1, main_network_nodesperlayer=3, seed=1):
     # Set random seeds for reproducibility
     device = "cpu"
     torch.manual_seed(seed)
@@ -68,68 +68,80 @@ def main(nodes, layers, grid_size, seed=1):
         if file_path.stem.replace('_train', '') not in all_sets:
             continue
         print(f"Processing {file_path.name}")
-        try:
-            function_name = file_path.stem.replace('_train', '')
+        # try:
+        function_name = file_path.stem.replace('_train', '')
 
-            train_df = pd.read_csv(file_path, header=None)
-            test_df = pd.read_csv(folder_path / 'test' / f'{function_name}_test.csv', header=None)
-            X_train = torch.tensor(train_df.iloc[:, :-1].values, dtype=torch.float32)
-            y_train = torch.tensor(train_df.iloc[:, -1].values, dtype=torch.float32).reshape(-1, 1)
-            X_test = torch.tensor(test_df.iloc[:, :-1].values, dtype=torch.float32)
-            y_test = torch.tensor(test_df.iloc[:, -1].values, dtype=torch.float32).reshape(-1, 1)
-            dataset = {'train_input': X_train, 'train_label': y_train, 'test_input': X_test, 'test_label': y_test}
-            # # Initialize KAN and fit the model
+        train_df = pd.read_csv(file_path, header=None)
+        test_df = pd.read_csv(folder_path / 'test' / f'{function_name}_test.csv', header=None)
+        X_train = torch.tensor(train_df.iloc[:, :-1].values, dtype=torch.float32)
+        y_train = torch.tensor(train_df.iloc[:, -1].values, dtype=torch.float32).reshape(-1, 1)
+        X_test = torch.tensor(test_df.iloc[:, :-1].values, dtype=torch.float32)
+        y_test = torch.tensor(test_df.iloc[:, -1].values, dtype=torch.float32).reshape(-1, 1)
+        dataset = {'train_input': X_train, 'train_label': y_train, 'test_input': X_test, 'test_label': y_test}
+        # # Initialize KAN and fit the model
 
-            match modelname:
-                case 'MLPKAN':
-                    kan = MLPKAN([X_train.size()[1], 3, 1], subnetwork_shape=[nodes] * layers)
-                case 'FastKAN':
-                    kan = FastKAN([X_train.size()[1], 3, 1], num_grids=grid_size)
-                case 'EfficientKAN':
-                    kan = EfficientKAN([X_train.size()[1], 3, 1], grid_size=grid_size)
-                case 'standardMLP':
-                    kan = standardMLP([X_train.size()[1], 10, 10, 10, 1])
+        match modelname:
+            case 'MLPKAN':
+                kan = MLPKAN([X_train.size()[1]] + [main_network_nodesperlayer] * main_network_layers + [1], subnetwork_shape=[nodes] * layers, residual_connection=True)
+            case 'FastKAN':
+                kan = FastKAN([X_train.size()[1]] + [main_network_nodesperlayer] * main_network_layers + [1], num_grids=grid_size)
+            case 'EfficientKAN':
+                kan = EfficientKAN([X_train.size()[1]] + [main_network_nodesperlayer] * main_network_layers + [1], grid_size=grid_size)
+            case 'standardMLP':
+                kan = standardMLP([X_train.size()[1]] + [main_network_nodesperlayer] * main_network_layers + [1])
 
-            t0 = time.perf_counter()
-            kan.fit(dataset=dataset, steps=250, lr=1e-2, batch_size=128, early_stop=0.99, weight_decay=1e-3, reg_activation=0, reg_entropy=0);
-            t_KAN = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        kan.fit(dataset=dataset, steps=250, lr=1e-2, batch_size=128, early_stop=0.99, weight_decay=1e-3, reg_activation=0, reg_entropy=0);
+        t_KAN = time.perf_counter() - t0
 
-            y_pred_test = kan(dataset['test_input'])
-            y_pred_train = kan(dataset['train_input'])
-            mse_test = torch.nn.MSELoss()(y_pred_test, dataset['test_label']).item()
-            mse_train = torch.nn.MSELoss()(y_pred_train, dataset['train_label']).item()
-            R2_score_kan = R2(y_pred_test, dataset['test_label']).item()
-            level = 'Easy' if function_name in easy_set else 'Medium' if function_name in medium_set else 'Hard'
-            results.append([function_name, mse_train, mse_test, R2_score_kan, t_KAN, level])
+        y_pred_test = kan(dataset['test_input'])
+        y_pred_train = kan(dataset['train_input'])
+        mse_test = torch.nn.MSELoss()(y_pred_test, dataset['test_label']).item()
+        mse_train = torch.nn.MSELoss()(y_pred_train, dataset['train_label']).item()
+        R2_score_kan = R2(y_pred_test, dataset['test_label']).item()
+        level = 'Easy' if function_name in easy_set else 'Medium' if function_name in medium_set else 'Hard'
+        results.append([function_name, mse_train, mse_test, R2_score_kan, t_KAN, level])
 
-        except Exception as e:
-            print(f"Error processing {file_path.name}: {e}")
-            results.append([function_name, None, None, None, None, None])
+        # except Exception as e:
+        #     print(f"Error processing {file_path.name}: {e}")
+        #     results.append([function_name, None, None, None, None, None])
 
     return results
 
 
 if __name__ == "__main__":
-    nodes = [2,12,22,32,42,52]
-    layers = [1,2,3,4,5]
-    seed = 1
-    results = []
-    for i in layers:
-        for j in nodes:
-            print(f"%%%%%%%Running with {i} layers and {j} nodes")
-            layer_node_results = main(nodes=j, layers=i, grid_size=None, seed=seed)
-            for r in layer_node_results:
-                row = [i, j] + r
-                results.append(row)
-    results_df = pd.DataFrame(results, columns=['Layers', 'Nodes', 'Function', 'train MSE', 'test MSE', 'R2 Score', 'time', 'Level'])
-    results_df.to_csv(f'./parameterTests/MLPKAN_layervariablenodesvariableNormVar.csv', index=False)
-    # grid_sizes = [2, 3, 4, 5, 6, 7, 8, 9, 10]
+    # nodes = [2,4,6,8,10]
+    # layers = [2]
+    # seed = 1
+    # results = []
+    # for i in layers:
+    #     for j in nodes:
+    #         print(f"%%%%%%%Running with {i} layers and {j} nodes")
+    #         layer_node_results = main(nodes=j, layers=i, grid_size=None, seed=seed)
+    #         for r in layer_node_results:
+    #             row = [i, j] + r
+    #             results.append(row)
+    # results_df = pd.DataFrame(results, columns=['Layers', 'Nodes', 'Function', 'train MSE', 'test MSE', 'R2 Score', 'time', 'Level'])
+    # results_df.to_csv(f'./parameterTests/MLPKAN_layer2nodes200.csv', index=False)
+    # grid_sizes = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
     # seed = 1
     # results = []
     # for grid_size in grid_sizes:
-    #     grid_results = main(nodes=None, layers=None, grid_size=grid_size, seed=seed)
+    #     print(f"%%%%%%%Running with grid size {grid_size}")
+    #     grid_results = main(nodes=None, layers=None, grid_size=grid_size, main_network_layers=1, main_network_nodesperlayer=3, seed=seed)
     #     for r in grid_results:
     #         row = [grid_size] + r
     #         results.append(row)
     # results_df = pd.DataFrame(results, columns=['Grid Size', 'Function', 'train MSE', 'test MSE', 'R2 Score', 'time', 'Level'])
-    # results_df.to_csv(f'./parameterTests/FastKAN_grid_size_variable.csv', index=False)
+    # results_df.to_csv(f'./parameterTests/FastKAN_grid_size_variable2.csv', index=False)
+    main_layers = [1,5,10,15,20]
+    seed = 1
+    results = []
+    for main_network_layers in main_layers:
+        print(f"%%%%%%%Running with main network layers {main_network_layers}")
+        main_network_results = main(nodes=20, layers=2, grid_size=None, main_network_layers=main_network_layers, main_network_nodesperlayer=3, seed=seed)
+        for r in main_network_results:
+            row = [main_network_layers] + r
+            results.append(row)
+    results_df = pd.DataFrame(results, columns=['Main Network Layers', 'Function', 'train MSE', 'test MSE', 'R2 Score', 'time', 'Level'])
+    results_df.to_csv(f'./parameterTests/MLPKAN_main_network_layers_variable_residual.csv', index=False)
