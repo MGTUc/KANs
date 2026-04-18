@@ -144,4 +144,4 @@ if __name__ == "__main__":
             row = [main_network_layers] + r
             results.append(row)
     results_df = pd.DataFrame(results, columns=['Main Network Layers', 'Function', 'train MSE', 'test MSE', 'R2 Score', 'time', 'Level'])
-    results_df.to_csv(f'./parameterTests/MLPKAN_main_network_layers_variable_residual.csv', index=False)
+    results_df.to_csv(f'./parameterTests/MLPKAN_main_network_layers_variableres001.csv', index=False)

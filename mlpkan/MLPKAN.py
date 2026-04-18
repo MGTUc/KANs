@@ -78,7 +78,7 @@ class MLPKANlayer(nn.Module):
             torch.randn(self.num_nets, 1, 1) * np.sqrt(1.0/self.input_size)
             )
             self.subnet_scaling = nn.Parameter(
-                torch.nn.init.trunc_normal_(torch.zeros(self.num_nets, 1, 1), mean=0, std=0.1)
+                torch.nn.init.trunc_normal_(torch.zeros(self.num_nets, 1, 1), mean=0, std=0.001)
             )
         else:
             self.residual_scaling = torch.zeros((self.num_nets, 1, 1))
@@ -89,9 +89,9 @@ class MLPKANlayer(nn.Module):
     @staticmethod
     def _init_scaled_weights(num_nets, out_dim, in_dim, lastLayer):
         # Xavier uniform initialization
-        limit = np.sqrt(6.0 / (in_dim + out_dim)) if not lastLayer else np.sqrt(3.0 / in_dim)
-        weights = torch.zeros(num_nets, out_dim, in_dim)
-        weights.uniform_(-limit, limit)
+        # limit = np.sqrt(6.0 / (in_dim + out_dim)) if not lastLayer else np.sqrt(3.0 / in_dim)
+        # weights = torch.zeros(num_nets, out_dim, in_dim)
+        # weights.uniform_(-limit, limit)
 
 
         # Standard 'He' limit for Uniform distribution
@@ -100,8 +100,8 @@ class MLPKANlayer(nn.Module):
         # weights.uniform_(-limit, limit)
 
         # standard 'He' normal initialization
-        # std = np.sqrt(2.0 / in_dim) if not lastLayer else np.sqrt(1.0 / in_dim)
-        # weights = torch.randn(num_nets, out_dim, in_dim) * std 
+        std = np.sqrt(2.0 / in_dim) if not lastLayer else np.sqrt(1.0 / in_dim)
+        weights = torch.randn(num_nets, out_dim, in_dim) * std 
 
         # weights = torch.randn(num_nets, out_dim, in_dim)
         return weights
