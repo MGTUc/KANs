@@ -18,7 +18,7 @@ def R2(preds, targets):
 
 class standardMLP(nn.Module):
     """
-    Simple MLP: A standard feedforward neural network with ReLU activations.
+    Simple MLP: A standard feedforward neural network with SiLU activations.
     
     Architecture:
         - For layerSizes=[1, 3, 1]: creates a 2-layer MLP with 1 input, 3 hidden units, and 1 output.
@@ -31,9 +31,28 @@ class standardMLP(nn.Module):
         layers = []
         hidden_dims = layerSizes[1:-1]
         for i in range(len(hidden_dims)):
-            layers.append(nn.Linear(layerSizes[i], hidden_dims[i]))
-            layers.append(nn.ReLU())
-        layers.append(nn.Linear(hidden_dims[-1], layerSizes[-1]))
+            linear = nn.Linear(layerSizes[i], hidden_dims[i])
+            # Use fan-in scaling for non-square layers to avoid variance shrinkage in wide expansions.
+            # gain = 1
+            # linear.weight.data = torch.randn(linear.weight.shape) * gain / np.sqrt(linear.in_features)
+            # # expansion_gain = np.sqrt(hidden_dims[i] / layerSizes[i]) if hidden_dims[i] > layerSizes[i] else 1.0
+            # # nn.init.orthogonal_(linear.weight.data, gain=expansion_gain * np.sqrt(2))
+            # nn.init.zeros_(linear.bias)
+            nn.init.kaiming_normal_(linear.weight, mode='fan_in', nonlinearity='linear')
+            nn.init.zeros_(linear.bias)
+            layers.append(linear)
+            layers.append(nn.SELU())
+            layers.append(nn.LayerNorm(hidden_dims[i]))
+        
+        output_linear = nn.Linear(hidden_dims[-1], layerSizes[-1])
+        out_dim, in_dim = output_linear.weight.shape
+        # expansion_gain = np.sqrt(out_dim / in_dim) if out_dim > in_dim else 1.0
+        # nn.init.orthogonal_(output_linear.weight.data, gain=expansion_gain)
+        # output_linear.weight.data = torch.randn(output_linear.weight.shape) * 1.0 / np.sqrt(in_dim)
+        nn.init.kaiming_normal_(output_linear.weight, mode='fan_in', nonlinearity='linear')
+        # output_linear.weight.data = torch.ones(output_linear.weight.shape)
+        nn.init.zeros_(output_linear.bias)
+        layers.append(output_linear)
         self.net = nn.Sequential(*layers)
 
     def forward(self, x):

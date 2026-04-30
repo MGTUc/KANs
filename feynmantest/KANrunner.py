@@ -82,7 +82,7 @@ def main(nodes, layers, grid_size, main_network_layers=1, main_network_nodesperl
 
         match modelname:
             case 'MLPKAN':
-                kan = MLPKAN([X_train.size()[1]] + [main_network_nodesperlayer] * main_network_layers + [1], subnetwork_shape=[nodes] * layers, residual_connection=True)
+                kan = MLPKAN([X_train.size()[1]] + [main_network_nodesperlayer] * main_network_layers + [1], subnetwork_shape=[nodes] * layers, residual_connection=True, layer_normalization=False)
             case 'FastKAN':
                 kan = FastKAN([X_train.size()[1]] + [main_network_nodesperlayer] * main_network_layers + [1], num_grids=grid_size)
             case 'EfficientKAN':
@@ -91,16 +91,18 @@ def main(nodes, layers, grid_size, main_network_layers=1, main_network_nodesperl
                 kan = standardMLP([X_train.size()[1]] + [main_network_nodesperlayer] * main_network_layers + [1])
 
         t0 = time.perf_counter()
-        kan.fit(dataset=dataset, steps=250, lr=1e-2, batch_size=128, early_stop=0.99, weight_decay=1e-3, reg_activation=0, reg_entropy=0);
+        # kan.fit(dataset=dataset, steps=250, lr=1e-2, batch_size=32, early_stop=0.999, weight_decay=1e-3, reg_activation=0, reg_entropy=0);
+        kan.fit(dataset=dataset, steps=250, lr=1e-2, batch_size=32, early_stop=0.999, weight_decay=1e-3, reg_activation=0, reg_entropy=0);
         t_KAN = time.perf_counter() - t0
 
         y_pred_test = kan(dataset['test_input'])
         y_pred_train = kan(dataset['train_input'])
         mse_test = torch.nn.MSELoss()(y_pred_test, dataset['test_label']).item()
         mse_train = torch.nn.MSELoss()(y_pred_train, dataset['train_label']).item()
-        R2_score_kan = R2(y_pred_test, dataset['test_label']).item()
+        R2_score_kan_test = R2(y_pred_test, dataset['test_label']).item()
+        R2_score_kan_train = R2(y_pred_train, dataset['train_label']).item()
         level = 'Easy' if function_name in easy_set else 'Medium' if function_name in medium_set else 'Hard'
-        results.append([function_name, mse_train, mse_test, R2_score_kan, t_KAN, level])
+        results.append([function_name, mse_train, mse_test, R2_score_kan_test, R2_score_kan_train, t_KAN, level])
 
         # except Exception as e:
         #     print(f"Error processing {file_path.name}: {e}")
@@ -110,19 +112,19 @@ def main(nodes, layers, grid_size, main_network_layers=1, main_network_nodesperl
 
 
 if __name__ == "__main__":
-    # nodes = [2,4,6,8,10]
-    # layers = [2]
-    # seed = 1
-    # results = []
-    # for i in layers:
-    #     for j in nodes:
-    #         print(f"%%%%%%%Running with {i} layers and {j} nodes")
-    #         layer_node_results = main(nodes=j, layers=i, grid_size=None, seed=seed)
-    #         for r in layer_node_results:
-    #             row = [i, j] + r
-    #             results.append(row)
-    # results_df = pd.DataFrame(results, columns=['Layers', 'Nodes', 'Function', 'train MSE', 'test MSE', 'R2 Score', 'time', 'Level'])
-    # results_df.to_csv(f'./parameterTests/MLPKAN_layer2nodes200.csv', index=False)
+    nodes = [2,12,22,32,42,52]
+    layers = [1,2,3,4,5]
+    seed = 1
+    results = []
+    for i in layers:
+        for j in nodes:
+            print(f"%%%%%%%Running with {i} layers and {j} nodes")
+            layer_node_results = main(nodes=j, layers=i, grid_size=None, seed=seed)
+            for r in layer_node_results:
+                row = [i, j] + r
+                results.append(row)
+    results_df = pd.DataFrame(results, columns=['Layers', 'Nodes', 'Function', 'train MSE', 'test MSE', 'R2 Score (Test)', 'R2 Score (Train)', 'time', 'Level'])
+    results_df.to_csv(f'./parameterTests/MLPKAN_res.csv', index=False)
     # grid_sizes = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
     # seed = 1
     # results = []
@@ -132,16 +134,16 @@ if __name__ == "__main__":
     #     for r in grid_results:
     #         row = [grid_size] + r
     #         results.append(row)
-    # results_df = pd.DataFrame(results, columns=['Grid Size', 'Function', 'train MSE', 'test MSE', 'R2 Score', 'time', 'Level'])
-    # results_df.to_csv(f'./parameterTests/FastKAN_grid_size_variable2.csv', index=False)
-    main_layers = [1,5,10,15,20]
-    seed = 1
-    results = []
-    for main_network_layers in main_layers:
-        print(f"%%%%%%%Running with main network layers {main_network_layers}")
-        main_network_results = main(nodes=20, layers=2, grid_size=None, main_network_layers=main_network_layers, main_network_nodesperlayer=3, seed=seed)
-        for r in main_network_results:
-            row = [main_network_layers] + r
-            results.append(row)
-    results_df = pd.DataFrame(results, columns=['Main Network Layers', 'Function', 'train MSE', 'test MSE', 'R2 Score', 'time', 'Level'])
-    results_df.to_csv(f'./parameterTests/MLPKAN_main_network_layers_variableres001.csv', index=False)
+    # results_df = pd.DataFrame(results, columns=['Grid Size', 'Function', 'train MSE', 'test MSE', 'R2 Score (Test)', 'R2 Score (Train)', 'time', 'Level'])
+    # results_df.to_csv(f'./parameterTests/FastKAN.csv', index=False)
+    # main_layers = [1,5,10,15,20]
+    # seed = 1
+    # results = []
+    # for main_network_layers in main_layers:
+    #     print(f"%%%%%%%Running with main network layers {main_network_layers}")
+    #     main_network_results = main(nodes=None, layers=None, grid_size=8, main_network_layers=main_network_layers, main_network_nodesperlayer=3, seed=seed)
+    #     for r in main_network_results:
+    #         row = [main_network_layers] + r
+    #         results.append(row)
+    # results_df = pd.DataFrame(results, columns=['Main Network Layers', 'Function', 'train MSE', 'test MSE', 'R2 Score (Test)', 'R2 Score (Train)', 'time', 'Level'])
+    # results_df.to_csv(f'./parameterTests/EfficientKAN_main_network_layers_variable.csv', index=False)

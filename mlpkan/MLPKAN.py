@@ -28,9 +28,11 @@ class MLPKANlayer(nn.Module):
         input_size,
         output_size,
         subnetwork_hidden_shape=[5, 5],
+        input_layer=False,
         residual_connection=False,
         subnet_scaling_init=1.0,
         residual_scaling_init=1.0,
+        normalization = False,
     ):
         super().__init__()
         self.input_size = input_size
@@ -38,6 +40,14 @@ class MLPKANlayer(nn.Module):
         self.num_nets = input_size * output_size
         self.pre_activations = None
         self.post_activations = None
+        self.normalization = normalization
+        if normalization:
+            self.norm_scaling = nn.Parameter(
+                torch.ones(self.num_nets, 1, 1) * (1.0 / np.sqrt(input_size))
+            )
+            self.norm_bias = nn.Parameter(
+                torch.zeros(self.num_nets, 1, 1)
+            )
         
         full_shape = [1] + subnetwork_hidden_shape + [1]
         
@@ -54,56 +64,44 @@ class MLPKANlayer(nn.Module):
 
             w = nn.Parameter(self._init_scaled_weights(self.num_nets, out_dim, in_dim, lastLayer))
             b = nn.Parameter(torch.zeros(self.num_nets, out_dim, 1))
+            # bound = 1 / np.sqrt(in_dim)
+            # nn.init.uniform_(b, a=-2, b=2)
+            nn.init.normal_(b, mean=0.0, std=1)
             
             self.weights.append(w)
             self.biases.append(b)
         
-        # self.subnet_scaling = nn.Parameter(
-        #     torch.full((self.num_nets, 1, 1), float(subnet_scaling_init))
-        # )
-        # self.subnet_scaling = nn.Parameter(
-        #     torch.randn(self.num_nets, 1, 1) * np.sqrt(1.0/self.input_size)
-        # )
-        # self.subnet_scaling = nn.Parameter(
-        #     torch.zeros(self.num_nets, 1, 1).uniform_(-np.sqrt(3.0/(self.input_size + self.output_size)), np.sqrt(3.0/(self.input_size + self.output_size)))
-        # )
+
         if residual_connection:
-            # self.residual_scaling = nn.Parameter(
-            #     torch.full((self.num_nets, 1, 1), float(1/self.input_size))
+            # self.register_buffer(
+            #     'residual_scaling',
+            #     torch.ones(self.num_nets, 1, 1) * (1.0 / input_size)
             # )
-            # self.residual_scaling = nn.Parameter(
-            # torch.zeros(self.num_nets, 1, 1).uniform_(-np.sqrt(3.0/(self.input_size)), np.sqrt(3.0/(self.input_size)))
-            # )
-            self.residual_scaling = nn.Parameter(
-            torch.randn(self.num_nets, 1, 1) * np.sqrt(1.0/self.input_size)
+            if input_layer:
+                self.residual_scaling = nn.Parameter(
+                torch.ones(self.num_nets, 1, 1) * (residual_scaling_init / np.sqrt(input_size))
             )
+            else:
+                self.residual_scaling = nn.Parameter(
+                    torch.ones(self.num_nets, 1, 1) * (residual_scaling_init / np.sqrt(input_size + input_size * (input_size-1)))
+                )
             self.subnet_scaling = nn.Parameter(
-                torch.nn.init.trunc_normal_(torch.zeros(self.num_nets, 1, 1), mean=0, std=0.001)
+                torch.zeros(self.num_nets, 1, 1)
             )
         else:
-            self.residual_scaling = torch.zeros((self.num_nets, 1, 1))
+            self.register_buffer('residual_scaling', torch.zeros(self.num_nets, 1, 1))
             self.subnet_scaling = nn.Parameter(
-            torch.randn(self.num_nets, 1, 1) * np.sqrt(1.0/self.input_size)
+                torch.ones(self.num_nets, 1, 1) * (subnet_scaling_init / np.sqrt(self.input_size))
             )
 
     @staticmethod
     def _init_scaled_weights(num_nets, out_dim, in_dim, lastLayer):
-        # Xavier uniform initialization
-        # limit = np.sqrt(6.0 / (in_dim + out_dim)) if not lastLayer else np.sqrt(3.0 / in_dim)
-        # weights = torch.zeros(num_nets, out_dim, in_dim)
-        # weights.uniform_(-limit, limit)
+        gain = 1
+        std = (gain / np.sqrt(in_dim)) if not lastLayer else (1.0 / np.sqrt(in_dim))
+        weights = torch.randn(num_nets, out_dim, in_dim) * std
 
-
-        # Standard 'He' limit for Uniform distribution
-        # limit = np.sqrt(6.0 / in_dim) if not lastLayer else np.sqrt(3.0 / in_dim)
-        # weights = torch.zeros(num_nets, out_dim, in_dim)
-        # weights.uniform_(-limit, limit)
-
-        # standard 'He' normal initialization
-        std = np.sqrt(2.0 / in_dim) if not lastLayer else np.sqrt(1.0 / in_dim)
-        weights = torch.randn(num_nets, out_dim, in_dim) * std 
-
-        # weights = torch.randn(num_nets, out_dim, in_dim)
+        # weights = torch.randn(num_nets, out_dim, in_dim) * 0.1
+ 
         return weights
     
     def forward(self, x, save_activations=False):
@@ -123,7 +121,11 @@ class MLPKANlayer(nn.Module):
             
             if i < num_layers - 1:
                 x = torch.nn.SiLU()(x)
-        
+                # x = torch.exp(-torch.pow(x, 2))
+            if i == num_layers - 2 and self.normalization:
+                x = self.normalize_hidden(x)
+                x = x * self.norm_scaling + self.norm_bias
+
 
         # x is currently [Num_Nets, 1, Batch] because the last layer output_dim is 1
         x = x * self.subnet_scaling + x_init * self.residual_scaling
@@ -132,6 +134,13 @@ class MLPKANlayer(nn.Module):
             self.post_activations = x
         # Sum over input_size (dim 0) -> [output_size, batch_size] -> Transpose to [Batch, Out]
         return (x.sum(dim=0)).T 
+    
+    @staticmethod
+    def normalize_hidden(x, eps=1e-4):
+        """Normalize along dim 1 (hidden) for each (net, batch) pair independently"""
+        mean = x.mean(dim=1, keepdim=True)
+        std = x.std(dim=1, keepdim=True)
+        return (x - mean) / (std + eps)
     
 
 
@@ -145,6 +154,7 @@ class MLPKAN(nn.Module):
         subnet_scaling_init=1.0,
         subnet_scaling_final=1.0,
         residual_scaling_init=1.0,
+        layer_normalization=False,
     ):
         super(MLPKAN, self).__init__()
         self.subnetwork_shape = subnetwork_shape
@@ -159,9 +169,11 @@ class MLPKAN(nn.Module):
                 input_size=layerSizes[i],
                 output_size=layerSizes[i+1],
                 subnetwork_hidden_shape=self.subnetwork_shape,
+                input_layer=(i == 0),
                 subnet_scaling_init=subnet_scaling_init if i != len(layerSizes)-2 else subnet_scaling_final, # Stronger scaling on earlier layers to encourage learning in deeper layers.
                 residual_scaling_init=residual_scaling_init,
-                residual_connection=residual_connection
+                residual_connection=residual_connection,
+                normalization=layer_normalization,
             )
             layers.append(mlpkan_layer)
         self.layers = nn.Sequential(*layers)
@@ -430,13 +442,11 @@ class MLPKAN(nn.Module):
         for name, param in self.named_parameters():
             if not param.requires_grad:
                 continue
-            # Handle common names (bias) and custom layouts (e.g. layers.0.biases.0).
-            name_tokens = set(name.split("."))
-            is_bias_like = ("bias" in name_tokens) or ("biases" in name_tokens)
-            if is_bias_like or param.ndim == 1:
-                no_decay_params.append(param)
-            else:
+            # Apply decay ONLY to network weights
+            if "weights" in name:
                 decay_params.append(param)
+            else:
+                no_decay_params.append(param)
 
         if len(no_decay_params) == 0:
             print("Warning: no no-decay params found. Check model.named_parameters() naming.")
@@ -507,7 +517,7 @@ if __name__ == "__main__":
     dataset = {'train_input': X_train, 'train_label': y_train, 'test_input': X_test, 'test_label': y_test}
 
     t0 = time.perf_counter()
-    histories = MLPKANmodel.fit(dataset, steps=1000, lr=0.001, early_stop=0.9999, optimizer_name='AdamW')
+    histories = MLPKANmodel.fit(dataset, steps=1000, lr=0.001, early_stop=0.9999)
     t1 = time.perf_counter() - t0
     print(t1)
 
