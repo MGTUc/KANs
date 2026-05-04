@@ -64,9 +64,10 @@ class MLPKANlayer(nn.Module):
 
             w = nn.Parameter(self._init_scaled_weights(self.num_nets, out_dim, in_dim, lastLayer))
             b = nn.Parameter(torch.zeros(self.num_nets, out_dim, 1))
+            # b = nn.Parameter(torch.linspace(-2, 2, steps=out_dim).unsqueeze(0).repeat(self.num_nets, 1).unsqueeze(2))
             # bound = 1 / np.sqrt(in_dim)
             # nn.init.uniform_(b, a=-2, b=2)
-            nn.init.normal_(b, mean=0.0, std=1)
+            nn.init.normal_(b, mean=0.0, std=1.0)
             
             self.weights.append(w)
             self.biases.append(b)
@@ -75,7 +76,7 @@ class MLPKANlayer(nn.Module):
         if residual_connection:
             # self.register_buffer(
             #     'residual_scaling',
-            #     torch.ones(self.num_nets, 1, 1) * (1.0 / input_size)
+            #     torch.ones(self.num_nets, 1, 1) * (1.0 / np.sqrt(input_size))
             # )
             if input_layer:
                 self.residual_scaling = nn.Parameter(
@@ -96,7 +97,7 @@ class MLPKANlayer(nn.Module):
 
     @staticmethod
     def _init_scaled_weights(num_nets, out_dim, in_dim, lastLayer):
-        gain = 1
+        gain = np.sqrt(2.0)
         std = (gain / np.sqrt(in_dim)) if not lastLayer else (1.0 / np.sqrt(in_dim))
         weights = torch.randn(num_nets, out_dim, in_dim) * std
 
@@ -120,7 +121,7 @@ class MLPKANlayer(nn.Module):
             x = torch.matmul(self.weights[i], x) + self.biases[i]
             
             if i < num_layers - 1:
-                x = torch.nn.SiLU()(x)
+                x = torch.nn.functional.silu(x)
                 # x = torch.exp(-torch.pow(x, 2))
             if i == num_layers - 2 and self.normalization:
                 x = self.normalize_hidden(x)
@@ -170,7 +171,7 @@ class MLPKAN(nn.Module):
                 output_size=layerSizes[i+1],
                 subnetwork_hidden_shape=self.subnetwork_shape,
                 input_layer=(i == 0),
-                subnet_scaling_init=subnet_scaling_init if i != len(layerSizes)-2 else subnet_scaling_final, # Stronger scaling on earlier layers to encourage learning in deeper layers.
+                subnet_scaling_init=subnet_scaling_init if i != len(layerSizes)-2 else subnet_scaling_final,
                 residual_scaling_init=residual_scaling_init,
                 residual_connection=residual_connection,
                 normalization=layer_normalization,

@@ -98,20 +98,24 @@ match nonlinearity_type:
         )
         extra_info_modelname = f"KAN_grid{kan_grid_size}_{seed_value}"
     case "MLPKAN":
-        subnetwork_shape = [10,10] # Use this for both state and output KANs for simplicity
+        subnetwork_shape = [32,32] # Use this for both state and output KANs for simplicity
         state_kan = FullStateNonlinearityMLPKAN(
             state_kan_input_size,
             state_kan_hidden_layers,
             state_kan_output_size, # Use general kan_hidden_layers config
-            subnetwork_shape = subnetwork_shape
+            subnetwork_shape = subnetwork_shape,
+            residual_connection=False, # This is the default for MLPKAN, but we can specify it here for clarity
+            subnet_scaling_final=1.0
         )
         output_kan = FullStateNonlinearityMLPKAN(
             output_kan_input_size,
             output_kan_hidden_layers, # Use specific hidden layer config
             output_kan_output_size,
-            subnetwork_shape = subnetwork_shape # Use specific grid size config
+            subnetwork_shape = subnetwork_shape, # Use specific grid size config
+            residual_connection=False, # This is the default for MLPKAN, but we can specify it here for clarity
+            subnet_scaling_final=1.0
         )
-        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_SiLU_noOut_noreg_{norm_flag}"
+        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}"
     case "FastKAN":
         num_grids = 5
         output_num_grids = 5
@@ -192,12 +196,12 @@ if load_model_path:
 # batch_size = 512
 # reg_lambda_l1 = 1e-3
 # reg_lambda_l2 = 1e-5
-learning_rate = 1e-3
-weight_decay = 0
+learning_rate = 3e-3
+weight_decay = 1e-3
 lr_scheduler_gamma = 0.999  
-num_epochs = 25
+num_epochs = 150
 batch_size = 128
-reg_lambda_l1 = 1
+reg_lambda_l1 = 0
 reg_lambda_l2 = 0
 
 
@@ -208,13 +212,11 @@ no_decay_params = []
 for name, param in model.named_parameters():
     if not param.requires_grad:
         continue
-    # Handle common names (bias) and custom layouts (e.g. layers.0.biases.0).
-    name_tokens = set(name.split("."))
-    is_bias_like = ("bias" in name_tokens) or ("biases" in name_tokens)
-    if is_bias_like or param.ndim == 1:
-        no_decay_params.append(param)
-    else:
+    # Apply decay ONLY to network weights
+    if "weights" in name:
         decay_params.append(param)
+    else:
+        no_decay_params.append(param)
 
 if len(no_decay_params) == 0:
     print("Warning: no no-decay params found. Check model.named_parameters() naming.")
@@ -232,10 +234,11 @@ print(
     f"no_decay: {sum(p.numel() for p in no_decay_params):,} params"
 )
 # Define learning rate scheduler
-scheduler = optim.lr_scheduler.ExponentialLR(
-    optimizer, gamma=lr_scheduler_gamma
-)
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+# scheduler = optim.lr_scheduler.ExponentialLR(
+#     optimizer, gamma=lr_scheduler_gamma
+# )
+# scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
 loss_fn = nn.MSELoss()
 # %%% print
 print("\n--- Experiment Configuration ---")
@@ -440,7 +443,7 @@ for epoch in range(num_epochs):
     test_loss = None
     if (epoch + 1) % test_eval_every == 0:
         test_loss = _utils.run_test_simulation_and_loss(current_sim_state, model, dataset, device, loss_fn)
-        epoch_loss_list_test.append(test_loss)
+        epoch_loss_list_test.append(test_loss.item())
         print(f"Epoch {epoch+1} Test Loss: {test_loss:.4f}")
     
     # test_loss = _utils.run_test_simulation_and_loss(current_sim_state, model, dataset, device, loss_fn)

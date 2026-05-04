@@ -72,8 +72,8 @@ class FastKANLayer(nn.Module):
         self.spline_linear = SplineLinear(input_dim * num_grids, output_dim, spline_weight_init_scale)
         self.use_base_update = use_base_update
         if use_base_update:
-            # self.base_activation = base_activation
-            self.base_activation = lambda x: x
+            self.base_activation = base_activation
+            # self.base_activation = lambda x: x
             self.base_linear = nn.Linear(input_dim, output_dim)
 
     def forward(self, x, use_layernorm=True):
