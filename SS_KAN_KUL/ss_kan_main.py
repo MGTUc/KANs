@@ -98,14 +98,14 @@ match nonlinearity_type:
         )
         extra_info_modelname = f"KAN_grid{kan_grid_size}_{seed_value}"
     case "MLPKAN":
-        subnetwork_shape = [32,32] # Use this for both state and output KANs for simplicity
+        subnetwork_shape = [12,12] # Use this for both state and output KANs for simplicity
         state_kan = FullStateNonlinearityMLPKAN(
             state_kan_input_size,
             state_kan_hidden_layers,
             state_kan_output_size, # Use general kan_hidden_layers config
             subnetwork_shape = subnetwork_shape,
             residual_connection=False, # This is the default for MLPKAN, but we can specify it here for clarity
-            subnet_scaling_final=1.0
+            subnet_scaling_final=0.0
         )
         output_kan = FullStateNonlinearityMLPKAN(
             output_kan_input_size,
@@ -113,7 +113,7 @@ match nonlinearity_type:
             output_kan_output_size,
             subnetwork_shape = subnetwork_shape, # Use specific grid size config
             residual_connection=False, # This is the default for MLPKAN, but we can specify it here for clarity
-            subnet_scaling_final=1.0
+            subnet_scaling_final=0.0
         )
         extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}"
     case "FastKAN":
@@ -199,7 +199,7 @@ if load_model_path:
 learning_rate = 3e-3
 weight_decay = 1e-3
 lr_scheduler_gamma = 0.999  
-num_epochs = 150
+num_epochs = 500
 batch_size = 128
 reg_lambda_l1 = 0
 reg_lambda_l2 = 0

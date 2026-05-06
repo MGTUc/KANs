@@ -61,7 +61,7 @@ def main(nodes, layers, grid_size, main_network_layers=1, main_network_nodesperl
 
     # Load the Feynman dataset
     folder_path = Path('./feynmanDatasetSmall')
-    modelname = 'EfficientKAN' # 'MLPKAN', 'FastKAN', 'EfficientKAN', 'standardMLP'
+    modelname = 'FastKAN' # 'MLPKAN', 'FastKAN', 'EfficientKAN', 'standardMLP'
 
     results = []
     for file_path in folder_path.glob('train/*.csv'):
@@ -92,7 +92,7 @@ def main(nodes, layers, grid_size, main_network_layers=1, main_network_nodesperl
 
         t0 = time.perf_counter()
         # kan.fit(dataset=dataset, steps=250, lr=1e-2, batch_size=32, early_stop=0.999, weight_decay=1e-3, reg_activation=0, reg_entropy=0);
-        kan.fit(dataset=dataset, steps=250, lr=1e-2, batch_size=32, early_stop=0.999, weight_decay=1e-3, reg_activation=0, reg_entropy=0);
+        kan.fit(dataset=dataset, steps=250, lr=5e-3, batch_size=32, early_stop=0.999, weight_decay=0, reg_activation=0, reg_entropy=0);
         t_KAN = time.perf_counter() - t0
 
         y_pred_test = kan(dataset['test_input'])
@@ -141,9 +141,9 @@ if __name__ == "__main__":
     results = []
     for main_network_layers in main_layers:
         print(f"%%%%%%%Running with main network layers {main_network_layers}")
-        main_network_results = main(nodes=None, layers=None, grid_size=5, main_network_layers=main_network_layers, main_network_nodesperlayer=3, seed=seed)
+        main_network_results = main(nodes=None, layers=None, grid_size=8, main_network_layers=main_network_layers, main_network_nodesperlayer=3, seed=seed)
         for r in main_network_results:
             row = [main_network_layers] + r
             results.append(row)
     results_df = pd.DataFrame(results, columns=['Main Network Layers', 'Function', 'train MSE', 'test MSE', 'R2 Score (Test)', 'R2 Score (Train)', 'time', 'Level'])
-    results_df.to_csv(f'./parameterTests/EfficientKAN_main.csv', index=False)
+    results_df.to_csv(f'./parameterTests/FastKAN_main.csv', index=False)

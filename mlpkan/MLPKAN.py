@@ -67,7 +67,7 @@ class MLPKANlayer(nn.Module):
             # b = nn.Parameter(torch.linspace(-2, 2, steps=out_dim).unsqueeze(0).repeat(self.num_nets, 1).unsqueeze(2))
             # bound = 1 / np.sqrt(in_dim)
             # nn.init.uniform_(b, a=-2, b=2)
-            nn.init.normal_(b, mean=0.0, std=1.0)
+            # nn.init.normal_(b, mean=0.0, std=1.0)
             
             self.weights.append(w)
             self.biases.append(b)
