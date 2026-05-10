@@ -196,10 +196,10 @@ if load_model_path:
 # batch_size = 512
 # reg_lambda_l1 = 1e-3
 # reg_lambda_l2 = 1e-5
-learning_rate = 3e-3
+learning_rate = 1e-3
 weight_decay = 1e-3
 lr_scheduler_gamma = 0.999  
-num_epochs = 500
+num_epochs = 150
 batch_size = 128
 reg_lambda_l1 = 0
 reg_lambda_l2 = 0
@@ -238,7 +238,7 @@ print(
 #     optimizer, gamma=lr_scheduler_gamma
 # )
 # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
-scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-5)
 loss_fn = nn.MSELoss()
 # %%% print
 print("\n--- Experiment Configuration ---")
