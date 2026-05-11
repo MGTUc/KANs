@@ -22,7 +22,7 @@ import efficient_kan
 
 #%% Efficient kan
 class FullStateNonlinearityKAN(nn.Module):
-    def __init__(self, input_size, hidden_layers, output_size, **kan_kwargs):
+    def __init__(self, input_size, hidden_layers, output_size, zero_final_layer=False, **kan_kwargs):
         """
         Initializes the KAN-based nonlinearity module.
         
@@ -30,7 +30,7 @@ class FullStateNonlinearityKAN(nn.Module):
             input_size (int): Total number of input features (state_dim + control input if used).
             hidden_layers (int): Hidden layer size (or can be a list of layer sizes).
             output_size (int): Output dimension (should match the state correction dimension).
-            use_input_in_nonlinearity (bool): If True, KAN receives both state and input.
+            zero_final_layer (bool): If True, initializes the final layer weights to zero.
             **kan_kwargs: Additional keyword arguments for efficient_kan.KAN.
         """
         super(FullStateNonlinearityKAN, self).__init__()
@@ -40,6 +40,14 @@ class FullStateNonlinearityKAN(nn.Module):
         else: # Assuming hidden_layers is already a list/tuple
              layers_config = [input_size] + list(hidden_layers) + [output_size]
         self.kan = efficient_kan.KAN(layers_config, **kan_kwargs)
+
+        if zero_final_layer:
+            with torch.no_grad():
+                final_layer = self.kan.layers[-1]
+                final_layer.base_weight.zero_()
+                final_layer.spline_weight.zero_()
+
+        print("HEREHERE",self.kan.forward(torch.ones(1, input_size)))  # Test forward pass with zero input to check initialization
 
     def forward(self, state=None, u=None, v=None, update_grid=False):
         """

@@ -75,7 +75,7 @@ output_kan_output_size = output_dim
 
 # %%% model call
 # Instantiate state KAN (ensure params match)
-nonlinearity_type = "MLPKAN" # Choose between "KAN", "MLPKAN", "FastKAN"
+nonlinearity_type = "KAN" # Choose between "KAN", "MLPKAN", "FastKAN"
 match nonlinearity_type:
     case "KAN":
         kan_grid_size = 5
@@ -84,8 +84,9 @@ match nonlinearity_type:
             state_kan_input_size, state_kan_hidden_layers, state_kan_output_size, # Use general kan_hidden_layers config
             grid_size=kan_grid_size,
             grid_range=[-1, 1],
-            #base_activation=torch.nn.Identity
-            #grid_eps=0.1
+            zero_final_layer=True, # Try initializing final layer to zero for better stability in training
+            # base_activation=torch.nn.Identity,
+            # grid_eps=0.1
         )
         output_kan = FullStateNonlinearityKAN(
             output_kan_input_size,
@@ -93,10 +94,11 @@ match nonlinearity_type:
             output_kan_output_size,
             grid_size=output_kan_grid_size, # Use specific grid size config
             grid_range=[-1,1],
+            zero_final_layer=True, # Try initializing final layer to zero for better stability in training
             #base_activation=torch.nn.Identity
             # grid_eps=0.1
         )
-        extra_info_modelname = f"KAN_grid{kan_grid_size}_{seed_value}"
+        extra_info_modelname = f"EfficientKAN_grid{kan_grid_size}_{seed_value}"
     case "MLPKAN":
         subnetwork_shape = [12,12] # Use this for both state and output KANs for simplicity
         state_kan = FullStateNonlinearityMLPKAN(
@@ -104,7 +106,7 @@ match nonlinearity_type:
             state_kan_hidden_layers,
             state_kan_output_size, # Use general kan_hidden_layers config
             subnetwork_shape = subnetwork_shape,
-            residual_connection=False, # This is the default for MLPKAN, but we can specify it here for clarity
+            residual_connection=False,
             subnet_scaling_final=0.0
         )
         output_kan = FullStateNonlinearityMLPKAN(
@@ -112,7 +114,7 @@ match nonlinearity_type:
             output_kan_hidden_layers, # Use specific hidden layer config
             output_kan_output_size,
             subnetwork_shape = subnetwork_shape, # Use specific grid size config
-            residual_connection=False, # This is the default for MLPKAN, but we can specify it here for clarity
+            residual_connection=False,
             subnet_scaling_final=0.0
         )
         extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}"
@@ -196,7 +198,7 @@ if load_model_path:
 # batch_size = 512
 # reg_lambda_l1 = 1e-3
 # reg_lambda_l2 = 1e-5
-learning_rate = 1e-3
+learning_rate = 5e-3
 weight_decay = 1e-3
 lr_scheduler_gamma = 0.999  
 num_epochs = 150

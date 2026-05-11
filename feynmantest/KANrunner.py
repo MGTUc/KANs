@@ -61,7 +61,7 @@ def main(nodes, layers, grid_size, main_network_layers=1, main_network_nodesperl
 
     # Load the Feynman dataset
     folder_path = Path('./feynmanDatasetSmall')
-    modelname = 'FastKAN' # 'MLPKAN', 'FastKAN', 'EfficientKAN', 'standardMLP'
+    modelname = 'EfficientKAN' # 'MLPKAN', 'FastKAN', 'EfficientKAN', 'standardMLP'
 
     results = []
     for file_path in folder_path.glob('train/*.csv'):
