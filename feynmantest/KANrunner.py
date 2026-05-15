@@ -86,7 +86,7 @@ def main(nodes, layers, grid_size, main_network_layers=1, main_network_nodesperl
             case 'FastKAN':
                 kan = FastKAN([X_train.size()[1]] + [main_network_nodesperlayer] * main_network_layers + [1], num_grids=grid_size)
             case 'EfficientKAN':
-                kan = EfficientKAN([X_train.size()[1]] + [main_network_nodesperlayer] * main_network_layers + [1], grid_size=grid_size)
+                kan = EfficientKAN([X_train.size()[1]] + [main_network_nodesperlayer] * main_network_layers + [1], grid_size=grid_size, grid_range=[-2, 2])
             case 'standardMLP':
                 kan = standardMLP([X_train.size()[1]] + [main_network_nodesperlayer] * main_network_layers + [1])
 
@@ -125,25 +125,25 @@ if __name__ == "__main__":
     #             results.append(row)
     # results_df = pd.DataFrame(results, columns=['Layers', 'Nodes', 'Function', 'train MSE', 'test MSE', 'R2 Score (Test)', 'R2 Score (Train)', 'time', 'Level'])
     # results_df.to_csv(f'./parameterTests/MLPKAN_restrainablebnorm.csv', index=False)
-    # grid_sizes = [2, 5, 8, 11, 14, 17, 20, 23]
-    # seed = 1
-    # results = []
-    # for grid_size in grid_sizes:
-    #     print(f"%%%%%%%Running with grid size {grid_size}")
-    #     grid_results = main(nodes=None, layers=None, grid_size=grid_size, main_network_layers=1, main_network_nodesperlayer=3, seed=seed)
-    #     for r in grid_results:
-    #         row = [grid_size] + r
-    #         results.append(row)
-    # results_df = pd.DataFrame(results, columns=['Grid Size', 'Function', 'train MSE', 'test MSE', 'R2 Score (Test)', 'R2 Score (Train)', 'time', 'Level'])
-    # results_df.to_csv(f'./parameterTests/EfficientKAN2.csv', index=False)
-    main_layers = [1,5,10,15,20]
+    grid_sizes = [2, 5, 8, 11, 14, 17, 20, 23]
     seed = 1
     results = []
-    for main_network_layers in main_layers:
-        print(f"%%%%%%%Running with main network layers {main_network_layers}")
-        main_network_results = main(nodes=None, layers=None, grid_size=8, main_network_layers=main_network_layers, main_network_nodesperlayer=3, seed=seed)
-        for r in main_network_results:
-            row = [main_network_layers] + r
+    for grid_size in grid_sizes:
+        print(f"%%%%%%%Running with grid size {grid_size}")
+        grid_results = main(nodes=None, layers=None, grid_size=grid_size, main_network_layers=1, main_network_nodesperlayer=3, seed=seed)
+        for r in grid_results:
+            row = [grid_size] + r
             results.append(row)
-    results_df = pd.DataFrame(results, columns=['Main Network Layers', 'Function', 'train MSE', 'test MSE', 'R2 Score (Test)', 'R2 Score (Train)', 'time', 'Level'])
-    results_df.to_csv(f'./parameterTests/FastKAN_main.csv', index=False)
+    results_df = pd.DataFrame(results, columns=['Grid Size', 'Function', 'train MSE', 'test MSE', 'R2 Score (Test)', 'R2 Score (Train)', 'time', 'Level'])
+    results_df.to_csv(f'./parameterTests/EfficientKAN22.csv', index=False)
+    # main_layers = [1,5,10,15,20]
+    # seed = 1
+    # results = []
+    # for main_network_layers in main_layers:
+    #     print(f"%%%%%%%Running with main network layers {main_network_layers}")
+    #     main_network_results = main(nodes=None, layers=None, grid_size=8, main_network_layers=main_network_layers, main_network_nodesperlayer=3, seed=seed)
+    #     for r in main_network_results:
+    #         row = [main_network_layers] + r
+    #         results.append(row)
+    # results_df = pd.DataFrame(results, columns=['Main Network Layers', 'Function', 'train MSE', 'test MSE', 'R2 Score (Test)', 'R2 Score (Train)', 'time', 'Level'])
+    # results_df.to_csv(f'./parameterTests/FastKAN_main.csv', index=False)

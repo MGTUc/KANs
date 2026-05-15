@@ -47,7 +47,6 @@ class FullStateNonlinearityKAN(nn.Module):
                 final_layer.base_weight.zero_()
                 final_layer.spline_weight.zero_()
 
-        print("HEREHERE",self.kan.forward(torch.ones(1, input_size)))  # Test forward pass with zero input to check initialization
 
     def forward(self, state=None, u=None, v=None, update_grid=False):
         """

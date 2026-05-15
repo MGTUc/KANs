@@ -86,6 +86,9 @@ class KANLinear(torch.nn.Module):
         # self.base_activation = lambda x: x
         self.grid_eps = grid_eps
 
+        self.pre_activations = None
+        self.post_activations = None
+
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -185,15 +188,36 @@ class KANLinear(torch.nn.Module):
             else 1.0
         )
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, save_activations: bool = False):
         assert x.dim() == 2 and x.size(1) == self.in_features
 
-        base_output = F.linear(self.base_activation(x), self.base_weight)
-        spline_output = F.linear(
-            self.b_splines(x).view(x.size(0), -1),
-            self.scaled_spline_weight.view(self.out_features, -1),
-        )
-        return base_output + spline_output
+        if not save_activations:
+            # Standard fused path — fast, no per-edge materialization.
+            base_output = F.linear(self.base_activation(x), self.base_weight)
+            spline_output = F.linear(
+                self.b_splines(x).view(x.size(0), -1),
+                self.scaled_spline_weight.view(self.out_features, -1),
+            )
+            return base_output + spline_output
+
+        # Plot/attribution path: build the per-edge tensor [in, out, batch].
+        self.pre_activations = x
+
+        base_act = self.base_activation(x)                       # [B, in]
+        splines  = self.b_splines(x)                             # [B, in, num_basis]
+
+        # Per-edge base contribution: base_weight[j,i] * SiLU(x)[b,i]
+        base_per_edge = self.base_weight.T.unsqueeze(-1) * base_act.T.unsqueeze(1)  # [in, out, B]
+
+        # Per-edge spline contribution: sum_k scaled_spline_weight[j,i,k] * splines[b,i,k]
+        spline_per_edge = torch.einsum(
+            "jik,bik->ijb", self.scaled_spline_weight, splines
+        )                                                        # [in, out, B]
+
+        post_activations = base_per_edge + spline_per_edge       # [in, out, B]
+        self.post_activations = post_activations
+
+        return post_activations.sum(dim=0).T                     # [B, out]
 
     @torch.no_grad()
     def update_grid(self, x: torch.Tensor, margin=0.01):
@@ -283,6 +307,7 @@ class KAN(torch.nn.Module):
         super(KAN, self).__init__()
         self.grid_size = grid_size
         self.spline_order = spline_order
+        self.layerSizes = list(layers_hidden)
 
         self.layers = torch.nn.ModuleList()
         for in_features, out_features in zip(layers_hidden, layers_hidden[1:]):
@@ -301,11 +326,21 @@ class KAN(torch.nn.Module):
                 )
             )
 
-    def forward(self, x: torch.Tensor, update_grid=False):
+        self.edge_attribution_scores = [
+            [[1.0 for _ in range(self.layerSizes[l + 1])]
+             for _ in range(self.layerSizes[l])]
+            for l in range(len(self.layerSizes) - 1)
+        ]
+        self.node_attribution_scores = [
+            [1.0 for _ in range(self.layerSizes[i])]
+            for i in range(len(self.layerSizes))
+        ]
+
+    def forward(self, x: torch.Tensor, update_grid=False, save_activations=False):
         for layer in self.layers:
             if update_grid:
                 layer.update_grid(x)
-            x = layer(x)
+            x = layer(x, save_activations=save_activations)
         return x
 
     def regularization_loss(self, regularize_activation=1.0, regularize_entropy=1.0):
@@ -313,6 +348,202 @@ class KAN(torch.nn.Module):
             layer.regularization_loss(regularize_activation, regularize_entropy)
             for layer in self.layers
         )
+    
+    def plot(self, folder="./figures", attribution_score_alpha=True, scale=0.5,
+             tick=False, sample=False, in_vars=None, out_vars=None, title=None,
+             edge_plot_scale=1.5):
+        """
+        Plot the KAN architecture with per-edge activation function thumbnails.
+        Requires a prior forward pass with save_activations=True.
+        """
+        import os
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from matplotlib.offsetbox import AnnotationBbox, OffsetImage
+
+        if attribution_score_alpha:
+            for l in reversed(range(len(self.layers))):
+                for i in range(self.layerSizes[l]):
+                    for j in range(self.layerSizes[l + 1]):
+                        self.edge_attribution_scores[l][i][j] = (
+                            self.node_attribution_scores[l + 1][j]
+                            * (
+                                torch.std(self.layers[l].post_activations[i, j, :])
+                                / (
+                                    torch.std(
+                                        self.layers[l].post_activations[:, j, :].sum(dim=0)
+                                    )
+                                    + 1e-8
+                                )
+                            ).item()
+                        )
+                    self.node_attribution_scores[l][i] = sum(
+                        self.edge_attribution_scores[l][i][j]
+                        for j in range(self.layerSizes[l + 1])
+                    )
+
+            max_node_score = max(max(layer) for layer in self.node_attribution_scores) + 1e-8
+            max_edge_score = max(
+                max(max(out_scores) for out_scores in layer)
+                for layer in self.edge_attribution_scores
+            ) + 1e-8
+
+            self.node_attribution_scores = [
+                [max(0, min(s / max_node_score, 1.0)) for s in row]
+                for row in self.node_attribution_scores
+            ]
+            self.edge_attribution_scores = [
+                [[max(0, min(s / max_edge_score, 1.0)) for s in out_scores]
+                 for out_scores in layer_scores]
+                for layer_scores in self.edge_attribution_scores
+            ]
+
+        missing_acts = [
+            idx for idx, layer in enumerate(self.layers)
+            if layer.pre_activations is None or layer.post_activations is None
+        ]
+        if missing_acts:
+            print(
+                "No activations saved for all layers. "
+                "Run model(x, save_activations=True) before calling plot()."
+            )
+            return None
+
+        os.makedirs(folder, exist_ok=True)
+
+        depth = len(self.layerSizes) - 1
+        thumbnail_zoom = max(0.06, 0.16 * scale * edge_plot_scale)
+
+        for l in range(depth):
+            for i in range(self.layerSizes[l]):
+                for j in range(self.layerSizes[l + 1]):
+                    rank = torch.argsort(self.layers[l].pre_activations[:, i])
+                    x_vals = self.layers[l].pre_activations[:, i][rank].detach().cpu().numpy()
+                    y_vals = self.layers[l].post_activations[i, j, :][rank].detach().cpu().numpy()
+
+                    edge_plot_scale = max(0.25, float(edge_plot_scale))
+                    with plt.ioff():
+                        fig_edge, ax_edge = plt.subplots(
+                            figsize=(2.2 * edge_plot_scale, 2.2 * edge_plot_scale)
+                        )
+                    fig_edge.subplots_adjust(left=0.16, right=0.96, bottom=0.16, top=0.96)
+                    if tick:
+                        ax_edge.tick_params(axis="both", labelsize=8)
+                    else:
+                        ax_edge.set_xticks([])
+                        ax_edge.set_yticks([])
+
+                    if attribution_score_alpha:
+                        edge_alpha = max(0.0, min(1.0, self.edge_attribution_scores[l][i][j]))
+                        ax_edge.plot(x_vals, y_vals, color="black", lw=2.0, alpha=edge_alpha)
+                    else:
+                        ax_edge.plot(x_vals, y_vals, color="black", lw=2.0)
+                    if sample:
+                        if attribution_score_alpha:
+                            edge_alpha = max(0.0, min(1.0, self.edge_attribution_scores[l][i][j]))
+                            ax_edge.scatter(x_vals, y_vals, color="black",
+                                            s=max(2, int(30 * scale)), alpha=edge_alpha)
+                        else:
+                            ax_edge.scatter(x_vals, y_vals, color="black",
+                                            s=max(2, int(30 * scale)))
+
+                    for spine in ax_edge.spines.values():
+                        spine.set_color("black")
+                        spine.set_linewidth(1.0)
+
+                    fig_edge.savefig(f"{folder}/sp_{l}_{i}_{j}.png", dpi=220)
+                    plt.close(fig_edge)
+
+        width = self.layerSizes
+        n_layers = len(width)
+        max_nodes = max(width)
+
+        fig_w = max(9.0, 1.8 * max_nodes) * scale * 2.0
+        fig_h = max(6.0, 2.6 * (n_layers - 1)) * scale * 2.0
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+
+        y_layer_pos = np.linspace(0.0, 1.0, n_layers)
+        x_node_pos = []
+        x_margin = 0.08
+        usable_width = 1.0 - 2.0 * x_margin
+        global_step = usable_width / max(max_nodes - 1, 1)
+        for n in width:
+            if n == 1:
+                x = np.array([0.5])
+            else:
+                span = (n - 1) * global_step
+                left = 0.5 - span / 2.0
+                right = 0.5 + span / 2.0
+                x = np.linspace(left, right, n)
+            x_node_pos.append(x)
+
+        for l in range(n_layers):
+            for i in range(width[l]):
+                ax.scatter(x_node_pos[l][i], y_layer_pos[l],
+                           s=120 * scale, color="black", zorder=5)
+                if l == 0 and in_vars is not None and i < len(in_vars):
+                    ax.text(x_node_pos[l][i], y_layer_pos[l] - 0.04, str(in_vars[i]),
+                            ha="center", va="top", fontsize=max(8, int(10 * scale)))
+                if l == n_layers - 1 and out_vars is not None and i < len(out_vars):
+                    ax.text(x_node_pos[l][i], y_layer_pos[l] + 0.04, str(out_vars[i]),
+                            ha="center", va="bottom", fontsize=max(8, int(10 * scale)))
+
+        for l in range(n_layers - 1):
+            y_bottom = y_layer_pos[l]
+            y_top = y_layer_pos[l + 1]
+            y_mid = 0.5 * (y_bottom + y_top)
+            n_in = width[l]
+            n_out = width[l + 1]
+            n_edges = n_in * n_out
+
+            if n_edges == 1:
+                x_strip = np.array([0.5])
+            else:
+                x_strip = np.linspace(0.08, 0.92, n_edges)
+            thumb_centers = {}
+
+            for i in range(n_in):
+                for j in range(n_out):
+                    edge_id = i * n_out + j
+                    x_img = x_strip[edge_id]
+                    y_img = y_mid
+                    thumb_centers[(i, j)] = (x_img, y_img)
+
+                    img_path = f"{folder}/sp_{l}_{i}_{j}.png"
+                    im = plt.imread(img_path)
+                    image_box = OffsetImage(im, zoom=thumbnail_zoom)
+                    ann = AnnotationBbox(image_box, (x_img, y_img),
+                                         frameon=False, xycoords='data')
+                    ax.add_artist(ann)
+
+            y_gap = 0.055
+            for i in range(n_in):
+                for j in range(n_out):
+                    x_bottom = x_node_pos[l][i]
+                    x_top = x_node_pos[l + 1][j]
+                    x_img, y_img = thumb_centers[(i, j)]
+                    edge_alpha = self.edge_attribution_scores[l][i][j]
+                    if attribution_score_alpha:
+                        ax.plot([x_bottom, x_img], [y_bottom, y_img - y_gap],
+                                color="black", lw=2, alpha=edge_alpha)
+                        ax.plot([x_img, x_top], [y_img + y_gap, y_top],
+                                color="black", lw=2, alpha=edge_alpha)
+                    else:
+                        ax.plot([x_bottom, x_img], [y_bottom, y_img - y_gap],
+                                color="black", lw=2)
+                        ax.plot([x_img, x_top], [y_img + y_gap, y_top],
+                                color="black", lw=2)
+
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(-0.08, 1.08)
+        ax.axis("off")
+
+        if title is not None:
+            ax.set_title(title, fontsize=max(10, int(12 * scale)))
+
+        fig.tight_layout()
+        plt.savefig(f"./SS_KAN_KUL/test___model_saves_simple_2/EfficientKAN2layer_architecture.pdf", dpi=220)
+        plt.show()
     
     
     def fit(

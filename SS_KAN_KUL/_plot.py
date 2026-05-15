@@ -1585,7 +1585,7 @@ inputs_to_plot_state = {
 
 #%%% plotly
 
-import plotly.graph_objects as go
+# import plotly.graph_objects as go
 
 def save_plotly_scatter3d_html(
     x: np.ndarray,

@@ -3,7 +3,7 @@ import torch.nn as nn
 from fastkan import FastKAN
 
 class FullStateNonlinearityFastKAN(nn.Module):
-    def __init__(self, input_size, hidden_layers, output_size, **kan_kwargs):
+    def __init__(self, input_size, hidden_layers, output_size, zero_final_layer=False, **kan_kwargs):
         """
         Initializes the KAN-based nonlinearity module.
         
@@ -11,7 +11,7 @@ class FullStateNonlinearityFastKAN(nn.Module):
             input_size (int): Total number of input features (state_dim + control input if used).
             hidden_layers (int): Hidden layer size (or can be a list of layer sizes).
             output_size (int): Output dimension (should match the state correction dimension).
-            use_input_in_nonlinearity (bool): If True, KAN receives both state and input.
+            zero_final_layer (bool): If True, initializes the final layer weights to zero.
             **kan_kwargs: Additional keyword arguments for mlpkan.MLPKAN.
         """
         super(FullStateNonlinearityFastKAN, self).__init__()
@@ -21,6 +21,14 @@ class FullStateNonlinearityFastKAN(nn.Module):
         else: # Assuming hidden_layers is already a list/tuple
              layers_config = [input_size] + list(hidden_layers) + [output_size]
         self.kan = FastKAN(layers_config, **kan_kwargs)
+
+        if zero_final_layer:
+            with torch.no_grad():
+                final_layer = self.kan.layers[-1]
+                final_layer.base_linear.weight.zero_()
+                # final_layer.base_linear.bias.zero_()
+                final_layer.spline_linear.weight.zero_()
+                # final_layer.spline_linear.bias.zero_()
 
     def forward(self, state=None, u=None, v=None, update_grid=False):
         """

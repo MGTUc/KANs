@@ -37,7 +37,7 @@ torch.manual_seed(seed_value)  # PyTorch CPU
 # %%% Data
 test_case_name = "Silverbox"
 test_flag = "arrow_extra"
-norm_flag = "minmax" #zscore or minmax
+norm_flag = "nothing" #zscore or minmax or nothing
 states_available_flag = False
 init_matrices_flag = 'Silverbox'
 
@@ -75,7 +75,7 @@ output_kan_output_size = output_dim
 
 # %%% model call
 # Instantiate state KAN (ensure params match)
-nonlinearity_type = "KAN" # Choose between "KAN", "MLPKAN", "FastKAN"
+nonlinearity_type = "MLPKAN" # Choose between "KAN", "MLPKAN", "FastKAN"
 match nonlinearity_type:
     case "KAN":
         kan_grid_size = 5
@@ -117,23 +117,29 @@ match nonlinearity_type:
             residual_connection=False,
             subnet_scaling_final=0.0
         )
-        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}"
+        extra_info_modelname = f"MLPKAN_subnet{str(subnetwork_shape)}_{seed_value}_nothing"
     case "FastKAN":
-        num_grids = 5
-        output_num_grids = 5
+        num_grids = 8
+        output_num_grids = 8
         state_kan = FullStateNonlinearityFastKAN(
             state_kan_input_size, 
             state_kan_hidden_layers, 
             state_kan_output_size, # Use general kan_hidden_layers config
             num_grids=num_grids,
+            grid_min=-1.5,
+            grid_max=1.5,
+            zero_final_layer=True, # Try initializing final layer to zero for better stability in training
         )
         output_kan = FullStateNonlinearityFastKAN(
             output_kan_input_size,
             output_kan_hidden_layers, # Use specific hidden layer config
             output_kan_output_size,
             num_grids=output_num_grids, # Use specific grid size config
+            grid_min=-1.5,
+            grid_max=1.5,
+            zero_final_layer=True, # Try initializing final layer to zero for better stability in training
         )
-        extra_info_modelname = f"FastKAN_grid{num_grids}_{seed_value}"
+        extra_info_modelname = f"FastKAN_grid{num_grids}_{seed_value}_100"
 
 
 # state_kan = None
@@ -149,8 +155,8 @@ model = StateSpaceKANModel(
     trainable_D=True,
 )
 model.to(device)
-total_params = sum(p.numel() for p in model.parameters())
-print(f"Total parameters: {total_params:,}")
+# total_params = sum(p.numel() for p in model.parameters())
+# print(f"Total parameters: {total_params:,}")
 
 # %%% Saving/Loading Configuration
 model_save_dir = f"./SS_KAN_KUL/test___model_saves_simple_{state_dim}"  # Directory to save model state dicts
@@ -162,11 +168,11 @@ load_model = False
 if load_model:
     match nonlinearity_type:
         case "KAN":
-            load_model_path = 'C:\\Users\\Maarten\\codeProjects\\KANs\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_24_state_[2]_output_[2]_batch_512_KAN.pth'
+            load_model_path = 'C:\\Users\\Maarten\\codeProjects\\KANs\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_99_state_[]_output_[]_batch_64_EfficientKAN_grid5_1.pth'
         case "MLPKAN":
-            load_model_path = 'C:\\Users\\Maarten\\codeProjects\\KANs\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_24_state_[2]_output_[2]_batch_512_MLPKAN.pth'
+            load_model_path = 'C:\\Users\\Maarten\\codeProjects\\KANs\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_94_state_[]_output_[]_batch_64_MLPKAN_subnet[12, 12]_1_100.pth'
         case "FastKAN":
-            load_model_path = 'C:\\Users\\Maarten\\codeProjects\\KANs\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_24_state_[2]_output_[2]_batch_512_FastKAN.pth'
+            load_model_path = 'C:\\Users\\Maarten\\codeProjects\\KANs\\SS_KAN_KUL\\test___model_saves_simple_2\\best_model_Silverbox_epoch_99_state_[]_output_[]_batch_64_FastKAN_grid8_1_100.pth'
 else:    
     load_model_path = None
 #load_model_path = 'test___model_saves_simple_2/model_Silverbox_epoch_99_state_[2]_output_[2]_batch_64_highL1.pth'
@@ -198,11 +204,21 @@ if load_model_path:
 # batch_size = 512
 # reg_lambda_l1 = 1e-3
 # reg_lambda_l2 = 1e-5
-learning_rate = 5e-3
-weight_decay = 1e-3
+
+# Good MLPKAN
+# learning_rate = 1e-3
+# weight_decay = 1e-3
+# lr_scheduler_gamma = 0.999  
+# num_epochs = 100
+# batch_size = 128
+# reg_lambda_l1 = 0
+# reg_lambda_l2 = 0
+
+learning_rate = 1e-3
+weight_decay = 0
 lr_scheduler_gamma = 0.999  
-num_epochs = 150
-batch_size = 128
+num_epochs = 100
+batch_size = 64
 reg_lambda_l1 = 0
 reg_lambda_l2 = 0
 
@@ -215,7 +231,7 @@ for name, param in model.named_parameters():
     if not param.requires_grad:
         continue
     # Apply decay ONLY to network weights
-    if "weights" in name:
+    if "weights" in name or "spline_weight" in name or "spline_linear" in name:
         decay_params.append(param)
     else:
         no_decay_params.append(param)
@@ -394,7 +410,7 @@ for epoch in range(num_epochs):
             )
         # break
         #reg_loss_l1 = kan_model.kan.regularization_loss()
-        reg_loss_l1 = model.regularization_loss(regularize_activation=0, regularize_entropy=0) # Gets combined loss from active KANs
+        reg_loss_l1 = model.regularization_loss(regularize_activation=0.5, regularize_entropy=0.5) # Gets combined loss from active KANs
         reg_loss_l2 = (
             torch.norm(model.A - dataset.A_init) ** 2
             + torch.norm(model.B - dataset.B_init) ** 2

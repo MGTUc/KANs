@@ -405,6 +405,7 @@ class MLPKAN(nn.Module):
             ax.set_title(title, fontsize=max(10, int(12 * scale)))
 
         fig.tight_layout()
+        plt.savefig(f"./SS_KAN_KUL/test___model_saves_simple_2/MLPKAN_architecture.pdf", dpi=220)
         plt.show()
     
 
@@ -465,6 +466,9 @@ class MLPKAN(nn.Module):
             'rmse_history': [],
             'R2_history': [],
         }
+
+        save_act = True if reg_activation != 0 or reg_entropy != 0 else False
+        
         for t in range(steps):
             self.train()
             reg_Loss = torch.tensor(0.0, device=device)
@@ -472,7 +476,7 @@ class MLPKAN(nn.Module):
                 X = X.to(device, non_blocking=pin_memory)
                 y = y.to(device, non_blocking=pin_memory)
                 optimizer.zero_grad()
-                pred = self.forward(X, save_activations=True)
+                pred = self.forward(X, save_activations=save_act)
                 reg_Loss = self.regularization_loss(reg_activation, reg_entropy)
                 loss = loss_fn(pred, y) + reg_Loss
                 loss.backward()
